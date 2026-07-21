@@ -1,0 +1,115 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Client {
+  id                 String @id
+  name               String
+  companyName        String
+  email              String
+  phone              String
+  address            String
+  isoComplianceNotes String
+  relationType       String
+}
+
+model Material {
+  id               String @id
+  name             String
+  type             String
+  dimensions       String
+  grade            String
+  totalStock       Float
+  allocatedStock   Float
+  availableStock   Float
+  unit             String
+  supplier         String
+  batchNo          String
+  invoiceNo        String
+  materialCertUrl  String?
+  poNumber         String?
+  receivedByUserId String
+  receiptDate      String
+  price            Float?
+  quantityPurchased Float?
+}
+
+model Item {
+  id           String @id
+  name         String
+  itemCode     String
+  description  String
+  materials    String // Serialized JSON of MaterialRequirement[]
+  cutList      String // Serialized JSON of CutListItem[]
+  processes    String // Serialized JSON of ProcessTemplate[]
+  drawings     String // Serialized JSON of Drawing[]
+  subItems     String // Serialized JSON of SubItemRelation[]
+  dateCreated  String
+  createdBy    String
+}
+
+model Project {
+  id                    String @id
+  title                 String
+  clientId              String
+  jobCode               String
+  status                String
+  batchNo               String
+  dateCreated           String
+  deadline              String
+  subProjects           String // Serialized JSON of SubProject[]
+  includeStockItems     String // Serialized JSON of includeStockItems[]
+  qualityCertGenerated Boolean @default(false)
+  qualityPassedDate     String?
+  qualityPassedByUserId String?
+  notVisible            Int @default(0) // 0 = visible, 1 = hidden (soft-delete equivalent)
+}
+
+model InventoryLog {
+  id              String @id
+  type            String
+  date            String
+  materialId      String
+  materialName    String
+  quantity        Float
+  batchNo         String
+  invoiceNo       String?
+  poNumber        String?
+  projectCode     String?
+  clientName      String?
+  userId          String
+  notes           String?
+  externalPoNo    String?
+  externalCertUrl String?
+}
+
+model Setting {
+  id                    String @id @default("global")
+  companyName           String @default("Apex Heavy Engineering HQ")
+  accreditationBody     String @default("Lloyds Register Quality Assurance (LRQA)")
+  stampCode             String @default("STAMP-9001-2026")
+  facilityLocation      String @default("Melbourne Fabrication Hub Bay 4")
+  saasTier              String @default("Enterprise")
+  concurrentSeats       Int @default(25)
+  autoSaves             Boolean @default(true)
+  syncFreq              String @default("Real-time Transaction Lock")
+}
+
+model User {
+  id        String @id
+  name      String
+  role      String // Admin, Production Manager, Worker
+  avatar    String?
+}
+
+model Station {
+  id          String @id
+  name        String
+  description String?
+  isActive    Boolean @default(true)
+}

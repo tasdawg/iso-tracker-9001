@@ -1,0 +1,6 @@
+{
+  "name": "ISO 9001 Batch Material Tracker",
+  "description": "An ISO 9001 compliant tracker for manufacturing materials, parts, drawing DXFs, sub-items, processes, suppliers, certs and batch allocations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
