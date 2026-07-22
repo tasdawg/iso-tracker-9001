@@ -36,7 +36,8 @@ async function ensureSettingRecord() {
           saasTier: 'Enterprise',
           concurrentSeats: 25,
           autoSaves: true,
-          syncFreq: 'Real-time Transaction Lock'
+          syncFreq: 'Real-time Transaction Lock',
+          ncrSeverities: undefined as any
         }
       });
     }
@@ -358,7 +359,8 @@ app.post('/api/sync', async (req, res) => {
           saasTier: settings.saasTier || 'Enterprise',
           concurrentSeats: parseInt(settings.concurrentSeats, 10) || 25,
           autoSaves: settings.autoSaves !== undefined ? !!settings.autoSaves : true,
-          syncFreq: settings.syncFreq || 'Real-time Transaction Lock'
+          syncFreq: settings.syncFreq || 'Real-time Transaction Lock',
+          ncrSeverities: undefined as any
         }
       });
     }
@@ -554,6 +556,75 @@ app.delete('/api/station/:id', async (req, res) => {
       return res.status(404).json({ error: 'Station not found' });
     }
     console.error('[Prisma] Failed to delete station:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Fresh Install with Backup - requires password confirmation
+app.post('/api/fresh-install', async (req, res) => {
+  try {
+    const { password } = req.body;
+    
+    // Verify password
+    if (password !== 'startagain') {
+      return res.status(401).json({ error: 'INVALID PASSWORD • ACCESS DENIED' });
+    }
+
+    const dbPath = path.join(process.cwd(), 'prisma', 'dev.db');
+    const backupTimestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
+    const backupFilename = `database-ISO-9001-${backupTimestamp}.bck`;
+    const backupPath = path.join(process.cwd(), 'prisma', backupFilename);
+
+    // Create backup of current database
+    if (fs.existsSync(dbPath)) {
+      fs.copyFileSync(dbPath, backupPath);
+      console.log(`[Fresh Install] Database backed up to: ${backupFilename}`);
+    }
+
+    // Delete all tables (order matters for foreign keys)
+    await prisma.inventoryLog.deleteMany({});
+    await prisma.item.deleteMany({});
+    await prisma.material.deleteMany({});
+    await prisma.client.deleteMany({});
+    await prisma.project.deleteMany({});
+    await prisma.station.deleteMany({});
+    await prisma.user.deleteMany({});
+    
+    // Reset setting to defaults (ncrSeverities will be set via Settings Manager UI)
+    await prisma.setting.upsert({
+      where: { id: 'global' },
+      update: {
+        companyName: 'Apex Heavy Engineering HQ',
+        accreditationBody: 'Lloyds Register Quality Assurance (LRQA)',
+        stampCode: 'STAMP-9001-2026',
+        facilityLocation: 'Melbourne Fabrication Hub Bay 4',
+        saasTier: 'Enterprise',
+        concurrentSeats: 25,
+        autoSaves: true,
+        syncFreq: 'Real-time Transaction Lock'
+      },
+      create: {
+        id: 'global',
+        companyName: 'Apex Heavy Engineering HQ',
+        accreditationBody: 'Lloyds Register Quality Assurance (LRQA)',
+        stampCode: 'STAMP-9001-2026',
+        facilityLocation: 'Melbourne Fabrication Hub Bay 4',
+        saasTier: 'Enterprise',
+        concurrentSeats: 25,
+        autoSaves: true,
+        syncFreq: 'Real-time Transaction Lock',
+        ncrSeverities: undefined as any
+      }
+    });
+
+    console.log('[Fresh Install] Database reset to factory defaults');
+    res.json({ 
+      success: true, 
+      message: `Fresh install complete. Database backed up as ${backupFilename}`,
+      backupFile: backupFilename
+    });
+  } catch (error: any) {
+    console.error('[Prisma] Fresh install failed:', error);
     res.status(500).json({ error: error.message });
   }
 });

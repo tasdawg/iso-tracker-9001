@@ -98,7 +98,7 @@ model Setting {
   concurrentSeats       Int @default(25)
   autoSaves             Boolean @default(true)
   syncFreq              String @default("Real-time Transaction Lock")
-  ncrSeverities         String // Serialized JSON of severity level strings
+  ncrSeverities         String? // Serialized JSON of severity level strings
 }
 
 model User {

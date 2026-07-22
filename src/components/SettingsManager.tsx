@@ -54,6 +54,12 @@ export default function SettingsManager({
 
   const [newSeverity, setNewSeverity] = useState('');
 
+  // Fresh Install State
+  const [showFreshInstallModal, setShowFreshInstallModal] = useState(false);
+  const [freshInstallPassword, setFreshInstallPassword] = useState('');
+  const [freshInstallError, setFreshInstallError] = useState('');
+  const [isPerformingFreshInstall, setIsPerformingFreshInstall] = useState(false);
+
   // Sync local state when parent settings prop changes
   useEffect(() => {
     if (settings) {
@@ -337,6 +343,38 @@ export default function SettingsManager({
   const handleRemoveSeverity = (severity: string) => {
     if (confirm(`Remove "${severity}" from NCR severity levels?`)) {
       setNcrSeverities(ncrSeverities.filter(s => s !== severity));
+    }
+  };
+
+  const handleFreshInstall = async () => {
+    if (!freshInstallPassword) {
+      setFreshInstallError('PASSWORD REQUIRED');
+      return;
+    }
+
+    setIsPerformingFreshInstall(true);
+    setFreshInstallError('');
+
+    try {
+      const response = await fetch('/api/fresh-install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: freshInstallPassword })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        alert(`FRESH INSTALL COMPLETE:\n\n${data.message}\n\nThe application will now reload with factory default settings.`);
+        localStorage.clear();
+        window.location.reload();
+      } else {
+        setFreshInstallError(data.error || 'INSTALLATION FAILED');
+      }
+    } catch (err) {
+      setFreshInstallError('CONNECTION ERROR • CHECK SERVER STATUS');
+    } finally {
+      setIsPerformingFreshInstall(false);
     }
   };
 
@@ -1077,6 +1115,61 @@ export default function SettingsManager({
             <p className="text-zinc-500 font-bold uppercase mb-1">Clause 8.6</p>
             <p className="text-white font-extrabold tracking-wider">BOM Release: 100% compliant</p>
           </div>
+        </div>
+      </div>
+
+      {/* Fresh Install Panel */}
+      <div className="p-5 bg-red-950/20 border border-red-900/60 space-y-4">
+        <h3 className="text-xs uppercase tracking-widest font-black text-red-500 pb-2 border-b border-red-900/40 flex items-center gap-1.5">
+          <Database size={14} /> CRITICAL: Fresh Database Install
+        </h3>
+
+        <p className="text-[10px] text-zinc-400 leading-relaxed uppercase">
+          Initialize a completely fresh database with no existing data. This operation will backup your current database before resetting everything to factory defaults.
+        </p>
+
+        <div className="bg-black border border-red-900/40 p-4 space-y-3">
+          <h4 className="text-[10px] uppercase font-bold text-red-400">Confirm Fresh Install</h4>
+          
+          <div className="space-y-2">
+            <label className="block text-[9px] uppercase font-bold text-zinc-500">
+              Authorization Password
+            </label>
+            <input
+              type="password"
+              value={freshInstallPassword}
+              onChange={(e) => { setFreshInstallPassword(e.target.value); setFreshInstallError(''); }}
+              placeholder="Enter password to confirm..."
+              onKeyDown={(e) => { if (e.key === 'Enter') handleFreshInstall(); }}
+              className="w-full bg-black border border-zinc-800 p-2 text-xs text-white uppercase focus:border-red-500 outline-none"
+            />
+            <p className="text-[8px] text-zinc-600 uppercase">
+              Password hint: "startagain" (case-sensitive)
+            </p>
+            {freshInstallError && (
+              <p className="text-[9px] text-red-400 uppercase font-bold">{freshInstallError}</p>
+            )}
+          </div>
+
+          <button
+            onClick={handleFreshInstall}
+            disabled={isPerformingFreshInstall || !freshInstallPassword}
+            className="w-full bg-red-600 hover:bg-red-500 text-white font-extrabold px-4 py-2 text-[10px] uppercase tracking-widest transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+          >
+            {isPerformingFreshInstall ? (
+              <>
+                <RefreshCw size={11} className="animate-spin" /> Performing Fresh Install...
+              </>
+            ) : (
+              <>
+                <Database size={11} /> Initialize Fresh Database Install
+              </>
+            )}
+          </button>
+
+          <p className="text-[8px] text-zinc-600 uppercase leading-relaxed">
+            WARNING: This will delete all projects, materials, items, clients, users, and stations. A backup file will be created before reset.
+          </p>
         </div>
       </div>
     </div>
