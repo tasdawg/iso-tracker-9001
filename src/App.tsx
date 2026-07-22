@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Project, Material, Item, Client, InventoryLog, User, SubProject, SubProjectProcess, Setting, Station } from './types';
+import { Project, Material, Item, Client, InventoryLog, User, SubProject, SubProjectProcess, Setting, Station, NCRReport } from './types';
 import { getStoredData, saveStoredData, generateBatchCode, generateNextId, generateNextLogId } from './utils';
 import ProjectDetails from './components/ProjectDetails';
 import ProjectForm from './components/ProjectForm';
@@ -14,6 +14,7 @@ import ItemsCatalog from './components/ItemsCatalog';
 import SettingsManager from './components/SettingsManager';
 import PrePage from './components/PrePage';
 import SimpleProjectPage from './components/SimpleProjectPage';
+import NcrManager from './components/NcrManager';
 
 import { 
   Building2, Warehouse, FileSliders, BarChart3, Radio, Layers, 
@@ -80,6 +81,10 @@ export default function App() {
     const saved = localStorage.getItem('app_settings');
     return saved ? JSON.parse(saved) : null;
   });
+  const [ncrs, setNcrs] = useState<NCRReport[]>(() => {
+    const saved = localStorage.getItem('global_ncrs');
+    return saved ? JSON.parse(saved) : [];
+  });
   
   // Current operator state (ISO 9001 required operator trace)
   // NOTE: Operator is initially null - will be set from DB users when data loads
@@ -93,11 +98,12 @@ export default function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(() => localStorage.getItem('operator_project_id'));
 
   // Navigation states
-  const [currentTab, setCurrentTab] = useState<'projects' | 'materials' | 'items' | 'clients' | 'settings'>('projects');
+  const [currentTab, setCurrentTab] = useState<'projects' | 'materials' | 'items' | 'clients' | 'ncr' | 'settings'>('projects');
   
   // View states
   const [selectedProjectForView, setSelectedProjectForView] = useState<Project | null>(null);
   const [showNewProjectForm, setShowNewProjectForm] = useState(false);
+  const [showCompletedProjects, setShowCompletedProjects] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [projectSearch, setProjectSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -406,7 +412,7 @@ export default function App() {
       p.batchNo.toLowerCase().includes(projectSearch.toLowerCase()) ||
       p.id.toLowerCase().includes(projectSearch.toLowerCase());
 
-    const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
+    const matchesStatus = (statusFilter === 'all' && p.status !== 'Completed') || p.status === statusFilter;
     const matchesClient = clientFilter === 'all' || p.clientId === clientFilter;
 
     return matchesSearch && matchesStatus && matchesClient;
@@ -500,7 +506,7 @@ export default function App() {
     <div className="min-h-screen bg-black text-white font-sans antialiased flex flex-col lg:flex-row">
       
       {/* LEFT SIDEBAR - Elegant Pure Black sidebar with neon orange highlights */}
-      <aside className="hidden lg:flex w-64 bg-zinc-950 border-r border-zinc-800 flex-col shrink-0 justify-between sticky top-0 h-screen z-40">
+      <aside className="hidden lg:flex w-45 bg-zinc-950 border-r border-zinc-800 flex-col shrink-0 justify-between sticky top-0 h-screen z-40">
         <div className="flex-grow flex flex-col overflow-y-auto">
           {/* Logo Section with strong technical identity */}
           <div className="p-8 flex-shrink-0 text-center border-b border-zinc-900 mb-6 relative">
@@ -520,6 +526,7 @@ export default function App() {
                   { id: 'materials', label: 'Raw Materials Spec' },
                   { id: 'items', label: 'CAD Bill of Items' },
                   { id: 'clients', label: 'Clients & Suppliers' },
+                  { id: 'ncr', label: 'NCR Reports' },
                   { id: 'settings', label: 'System Settings' }
                 ] as const)
             ).map((tab) => {
@@ -638,15 +645,17 @@ export default function App() {
         <header className="hidden lg:flex h-20 border-b border-zinc-900 items-center justify-between px-10 flex-shrink-0 bg-zinc-950/20 backdrop-blur-sm sticky top-0 z-30">
           <div className="flex flex-col">
             <span className="text-[9px] text-orange-500 font-extrabold tracking-[0.4em] uppercase mb-0.5">
-              {selectedProjectForView ? 'Assembly Control traveler' : showNewProjectForm ? 'Model Fabrication Project' : `${currentTab.toUpperCase()} LEDGER`}
+              {selectedProjectForView ? 'Assembly Control traveler' : showNewProjectForm ? 'Model Fabrication Project' : showCompletedProjects ? 'Archived Production Records' : `${currentTab.toUpperCase()} LEDGER`}
             </span>
             <h2 className="font-sans text-2xl lg:text-3xl font-black leading-none text-white tracking-widest uppercase">
               {selectedProjectForView 
                 ? `Job Spec: ${selectedProjectForView.id}`
                 : showNewProjectForm 
                   ? 'Incorporate Stream' 
-                  : currentTab === 'projects' 
-                    ? 'Active Stream projects' 
+                  : showCompletedProjects 
+                    ? 'Completed Projects Archive' 
+                    : currentTab === 'projects' 
+                      ? 'Active Stream projects' 
                     : currentTab === 'materials' 
                       ? 'Supplied raw materials' 
                       : currentTab === 'items' 
@@ -664,18 +673,26 @@ export default function App() {
             </div>
             
             {currentTab === 'projects' && !selectedProjectForView && !showNewProjectForm && (
-              <button
-                onClick={() => {
-                  if (items.length === 0 || clients.length === 0) {
-                    alert("A Client profile and an Item template must be registered to start job generation.");
-                    return;
-                  }
-                  setShowNewProjectForm(true);
-                }}
-                className="bg-orange-500 hover:bg-orange-400 text-black py-2 px-5 text-xs uppercase font-extrabold tracking-widest transition-colors cursor-pointer"
-              >
-                + Register New Project Run
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowCompletedProjects(true)}
+                  className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-1 px-2.5 text-[9px] uppercase font-extrabold tracking-widest transition-colors cursor-pointer border border-zinc-700"
+                >
+                  <CheckCircle className="inline mr-1" size={11} /> Completed Projects
+                </button>
+                <button
+                  onClick={() => {
+                    if (items.length === 0 || clients.length === 0) {
+                      alert("A Client profile and an Item template must be registered to start job generation.");
+                      return;
+                    }
+                    setShowNewProjectForm(true);
+                  }}
+                  className="bg-orange-500 hover:bg-orange-400 text-black py-2 px-5 text-xs uppercase font-extrabold tracking-widest transition-colors cursor-pointer"
+                >
+                  + Register New Project Run
+                </button>
+              </div>
             )}
 
             {(selectedProjectForView || showNewProjectForm) && (
@@ -720,6 +737,128 @@ export default function App() {
               onCancel={() => setShowNewProjectForm(false)}
               onSubmit={handleAddNewProject}
             />
+          ) : showCompletedProjects ? (
+            <div className="space-y-6 animate-fadeIn">
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => setShowCompletedProjects(false)}
+                  className="px-4 py-2 border border-zinc-800 hover:border-orange-500 text-zinc-300 hover:text-orange-500 text-[10px] uppercase tracking-widest transition-all font-bold cursor-pointer bg-black"
+                >
+                  &larr; Back to Active Projects
+                </button>
+                <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-mono">
+                  {projects.filter(p => p.status === 'Completed' && p.notVisible !== 1).length} Archived Jobs
+                </span>
+              </div>
+              <div className="bg-zinc-950 border border-zinc-800 overflow-x-auto">
+                <table className="w-full text-left text-xs font-mono border-collapse min-w-[750px]">
+                  <thead>
+                    <tr className="border-b border-zinc-800 text-zinc-500 uppercase tracking-widest text-[9px] bg-zinc-950">
+                      <th className="py-2.5 px-3 font-bold text-zinc-500">Exp</th>
+                      <th className="py-2.5 px-2 font-bold text-zinc-500">Job ID</th>
+                      <th className="py-2.5 px-2">Production stream Title</th>
+                      <th className="py-2.5 px-2">Mill Batch Tracing</th>
+                      <th className="py-2.5 px-2 font-bold text-zinc-500">Assignee Client</th>
+                      <th className="py-2.5 px-2 text-center">Status</th>
+                      <th className="py-2.5 px-2 text-center">Milestone</th>
+                      <th className="py-2.5 px-2 text-center">Routings Progress</th>
+                      <th className="py-2.5 px-3 text-right">Rapid Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {projects.filter(p => p.status === 'Completed' && p.notVisible !== 1).map((proj) => {
+                      const clientObj = clients.find(c => c.id === proj.clientId);
+                      const isExpanded = expandedProjectId === proj.id;
+
+                      let totalProcs = 0;
+                      let completedProcs = 0;
+                      (proj.subProjects || []).forEach(sub => {
+                        (sub.processes || []).forEach(p => {
+                          totalProcs++;
+                          if (p && p.status === 'Completed') completedProcs++;
+                        });
+                      });
+
+                      const progressVal = totalProcs > 0 ? Math.round((completedProcs / totalProcs) * 100) : 0;
+
+                      return (
+                        <React.Fragment key={proj.id}>
+                          <tr className="border-b border-zinc-900 hover:bg-zinc-900/30 transition-all text-zinc-400">
+                            <td className="py-3 px-3">
+                              <button
+                                onClick={() => setExpandedProjectId(isExpanded ? null : proj.id)}
+                                className="text-zinc-500 hover:text-orange-500 p-0.5 cursor-pointer focus:outline-none"
+                              >
+                                {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                              </button>
+                            </td>
+                            <td className="py-3 px-2">
+                              <button
+                                onClick={() => setSelectedProjectForView(proj)}
+                                className="font-extrabold text-orange-500 hover:text-orange-400 tracking-wider text-[11px] underline cursor-pointer focus:outline-none bg-transparent"
+                              >
+                                {proj.id}
+                              </button>
+                            </td>
+                            <td className="py-3 px-2 font-sans font-extrabold text-white uppercase text-[13px]">
+                              <div className="flex items-center flex-wrap gap-1.5 leading-tight">
+                                <span>{proj.title}</span>
+                              </div>
+                              <span className="block text-[9px] text-zinc-500 uppercase font-mono mt-0.5">PO Ref: {proj.jobCode}</span>
+                            </td>
+                            <td className="py-3 px-2">
+                              <span className="text-[10px] font-bold text-zinc-400">
+                                {proj.batchNo}
+                              </span>
+                            </td>
+                            <td className="py-3 px-2 max-w-[120px] truncate uppercase font-sans text-xs text-zinc-500 font-bold" title={clientObj?.companyName}>
+                              {clientObj ? clientObj.companyName : 'DIRECT FABRICATION'}
+                            </td>
+                            <td className="py-3 px-2 text-center">
+                              <span className="text-[9px] uppercase tracking-widest font-black text-emerald-400">
+                                {proj.status}
+                              </span>
+                            </td>
+                            <td className="py-3 px-2 text-center text-[10px] font-sans font-bold text-zinc-500">
+                              {proj.deadline}
+                            </td>
+                            <td className="py-3 px-2">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-grow bg-zinc-950 h-1.5 border border-zinc-800 overflow-hidden text-left max-w-[100px]">
+                                    <div className="bg-emerald-500 h-full" style={{ width: `${progressVal}%` }}></div>
+                                  </div>
+                                  <span className="font-mono text-[9px] font-bold text-zinc-500">{progressVal}%</span>
+                                </div>
+                                <span className="block text-[8px] text-zinc-600 uppercase">
+                                  {completedProcs}/{totalProcs} Operations Check
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              <div className="flex justify-end gap-1.5">
+                                <button
+                                  onClick={() => setSelectedProjectForView(proj)}
+                                  className="p-1 bg-zinc-950 hover:bg-orange-500 text-zinc-400 hover:text-black border-[0.5px] border-[#2222225c] hover:border-orange-500 transition-all cursor-pointer"
+                                  title="View project details"
+                                >
+                                  <Eye size={11} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {projects.filter(p => p.status === 'Completed' && p.notVisible !== 1).length === 0 && (
+                  <div className="py-8 text-center text-zinc-600 text-xs uppercase tracking-widest font-bold">
+                    No completed projects archived yet
+                  </div>
+                )}
+              </div>
+            </div>
           ) : (
             <>
               {/* TAB: PROJECTS WORKFLOW PLANNER */}
@@ -788,6 +927,7 @@ export default function App() {
                           <th className="py-2.5 px-2">Production stream Title</th>
                           <th className="py-2.5 px-2">Mill Batch Tracing</th>
                           <th className="py-2.5 px-2 font-bold text-zinc-500">Assignee Client</th>
+                          <th className="py-2.5 px-2 text-center">Status</th>
                           <th className="py-2.5 px-2 text-center">Milestone</th>
                           <th className="py-2.5 px-2 text-center">Routings Progress</th>
                           <th className="py-2.5 px-3 text-right">Rapid Action</th>
@@ -850,6 +990,17 @@ export default function App() {
                                 </td>
                                 <td className="py-3 px-2 max-w-[120px] truncate uppercase font-sans text-xs text-zinc-400 font-bold" title={clientObj?.companyName}>
                                   {clientObj ? clientObj.companyName : 'DIRECT FABRICATION'}
+                                </td>
+                                <td className="py-3 px-2 text-center">
+                                  <span className={`text-[9px] uppercase tracking-widest font-black ${
+                                    proj.status === 'Engineering' ? 'text-cyan-400' :
+                                    proj.status === 'Production' ? 'text-orange-500' :
+                                    proj.status === 'QA Inspection' ? 'text-green-400' :
+                                    proj.status === 'Completed' ? 'text-emerald-400' :
+                                    'text-blue-400'
+                                  }`}>
+                                    {proj.status}
+                                  </span>
                                 </td>
                                 <td className="py-3 px-2 text-center text-[10px] font-sans font-bold text-zinc-400">
                                   {proj.deadline}
@@ -1097,6 +1248,21 @@ export default function App() {
                 <ClientsManager
                   clients={clients}
                   onUpdateClients={updateClientsState}
+                />
+              )}
+
+              {/* TAB: NCR REPORTS */}
+              {currentTab === 'ncr' && (
+                <NcrManager
+                  ncrs={ncrs}
+                  currentUser={operator!}
+                  projects={projects}
+                  items={items}
+                  materials={materials}
+                  onUpdateNcrs={(updated) => {
+                    setNcrs(updated);
+                    localStorage.setItem('global_ncrs', JSON.stringify(updated));
+                  }}
                 />
               )}
 

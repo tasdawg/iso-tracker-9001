@@ -177,3 +177,28 @@ export interface Station {
   description?: string;
   isActive: boolean;
 }
+
+export interface NCRReport {
+  id: string;
+  subProjectBatch: string;
+  partName: string;
+  defectNotes: string;
+  severity: 'MINOR' | 'MAJOR' | 'CRITICAL_AUDIT';
+  correctiveAction: string;
+  raisedBy: string;
+  raisedDate: string;
+  status: 'OPEN' | 'RESOLVED';
+  resolvedBy?: string;
+  resolvedDate?: string;
+  
+  // Material trace properties (ISO 9001 quality system requirements)
+  materialId?: string;
+  materialName?: string;
+  materialBatch?: string;
+  materialSupplier?: string;
+  defectCategory?: 'GEOMETRIC_OUT_OF_TOLERANCE' | 'METALLURGICAL_LAMINATION' | 'WELDING_DEFECT_HYDROGEN' | 'COATING_GALVANIZING_DEFECT' | 'DOCUMENTATION_DISCREPANCY' | 'SUBCONTRACTOR_OUTSOURCE_FAILURE';
+  disposition?: 'REWORK' | 'SCRAP' | 'CONCESSION_USE_AS_IS' | 'RETURN_TO_SUPPLIER';
+  quarantineLocation?: string; 
+  assignedWelderStamp?: string; 
+  rootCause?: string;
+}

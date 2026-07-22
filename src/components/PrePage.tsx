@@ -528,17 +528,29 @@ export default function PrePage({
                     <Bolt size={14} className="text-[#f97316]" />
                     Step 2: Assign Work Station Stage
                   </label>
-                  <select
-                    value={selectedStage}
-                    onChange={(e) => setSelectedStage(e.target.value)}
-                    className="w-full bg-black border border-white/10 p-3 text-xs text-white outline-none font-mono focus:border-[#f97316]"
-                  >
-                    {standardStages.map((stage) => (
-                      <option key={stage} value={stage}>
-                        {stage === 'All Stages' ? 'ANY STATION (No Routing Limit)' : stage.toUpperCase()}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="grid grid-cols-4 gap-1.5 max-h-48 overflow-y-auto pr-0.5">
+                    {standardStages.map((stage) => {
+                      const isSelected = selectedStage === stage;
+                      return (
+                        <button
+                          key={stage}
+                          type="button"
+                          onClick={() => setSelectedStage(stage)}
+                          className={`p-2 text-center border transition-all rounded-none flex flex-col justify-center items-center h-14 bg-transparent cursor-pointer ${
+                            isSelected 
+                              ? 'border-[#f97316] bg-amber-500/[0.03]' 
+                              : 'border-white/10 hover:border-white/20 hover:bg-white/5'
+                          }`}
+                        >
+                          <span className={`text-[8px] font-bold uppercase tracking-wider leading-tight ${
+                            isSelected ? 'text-[#f97316]' : 'text-zinc-400'
+                          }`}>
+                            {stage === 'All Stages' ? 'ALL STAGES' : stage.toUpperCase()}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {/* Selected Status overview */}
