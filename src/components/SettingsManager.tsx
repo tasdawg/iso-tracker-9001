@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Database, Sliders, AlertCircle, RefreshCw, Layers, CheckCircle, UserPlus, Edit2, Trash2, X, Save, HardHat } from 'lucide-react';
+import { ShieldCheck, Database, Sliders, AlertCircle, RefreshCw, Layers, CheckCircle, UserPlus, Edit2, Trash2, X, Save, HardHat, Plus } from 'lucide-react';
 
 interface SettingsManagerProps {
   onClearDatabase: () => void;
@@ -40,6 +40,20 @@ export default function SettingsManager({
   const [autoSaves, setAutoSaves] = useState(settings?.autoSaves !== undefined ? settings.autoSaves : true);
   const [syncFreq, setSyncFreq] = useState(settings?.syncFreq || 'Real-time Transaction Lock');
 
+  // NCR Severity Levels - initialized from props or defaults
+  const [ncrSeverities, setNcrSeverities] = useState<string[]>(() => {
+    if (settings?.ncrSeverities) {
+      try {
+        return JSON.parse(settings.ncrSeverities);
+      } catch {
+        return ['MINOR', 'MAJOR', 'CRITICAL_AUDIT'];
+      }
+    }
+    return ['MINOR', 'MAJOR', 'CRITICAL_AUDIT'];
+  });
+
+  const [newSeverity, setNewSeverity] = useState('');
+
   // Sync local state when parent settings prop changes
   useEffect(() => {
     if (settings) {
@@ -51,6 +65,14 @@ export default function SettingsManager({
       setConcurrentSeats(settings.concurrentSeats || 25);
       setAutoSaves(settings.autoSaves !== undefined ? settings.autoSaves : true);
       setSyncFreq(settings.syncFreq || 'Real-time Transaction Lock');
+      
+      if (settings.ncrSeverities) {
+        try {
+          setNcrSeverities(JSON.parse(settings.ncrSeverities));
+        } catch {
+          // Keep current state if parse fails
+        }
+      }
     }
   }, [settings]);
 
@@ -123,12 +145,13 @@ export default function SettingsManager({
           saasTier,
           concurrentSeats,
           autoSaves,
-          syncFreq
+          syncFreq,
+          ncrSeverities: JSON.stringify(ncrSeverities)
         });
       }, 500); // Debounce saves by 500ms
       return () => clearTimeout(timeoutId);
     }
-  }, [companyName, accreditationBody, stampCode, facilityLocation, saasTier, concurrentSeats, autoSaves, syncFreq]);
+  }, [companyName, accreditationBody, stampCode, facilityLocation, saasTier, concurrentSeats, autoSaves, syncFreq, ncrSeverities]);
 
   // User Management Functions
   const handleAddUser = async () => {
@@ -303,6 +326,20 @@ export default function SettingsManager({
     setNewStationDescription('');
   };
 
+  // NCR Severity Management Functions
+  const handleAddSeverity = () => {
+    if (newSeverity.trim() && !ncrSeverities.includes(newSeverity.trim())) {
+      setNcrSeverities([...ncrSeverities, newSeverity.trim()]);
+      setNewSeverity('');
+    }
+  };
+
+  const handleRemoveSeverity = (severity: string) => {
+    if (confirm(`Remove "${severity}" from NCR severity levels?`)) {
+      setNcrSeverities(ncrSeverities.filter(s => s !== severity));
+    }
+  };
+
   const handleManualSync = () => {
     setIsSyncing(true);
     setSyncLog(prev => [...prev, `[Manual Audit] Triggering active database sync state...`]);
@@ -317,7 +354,8 @@ export default function SettingsManager({
       saasTier,
       concurrentSeats,
       autoSaves,
-      syncFreq
+      syncFreq,
+      ncrSeverities: JSON.stringify(ncrSeverities)
     });
     
     setTimeout(() => {
@@ -508,6 +546,70 @@ export default function SettingsManager({
               Factory Reset Systems State
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* NCR Severity Levels Panel */}
+      <div className="p-5 bg-zinc-950 border border-zinc-800 space-y-4">
+        <h3 className="text-xs uppercase tracking-widest font-black text-orange-500 pb-2 border-b border-white/5 flex items-center gap-1.5">
+          <AlertCircle size={14} /> NCR Severity Classification Registry
+        </h3>
+
+        <p className="text-[10px] text-zinc-400 leading-relaxed uppercase">
+          Configure the severity levels used for Non-Conformance Reports. These classifications determine priority routing and audit escalation paths.
+        </p>
+
+        {/* Add Severity Form */}
+        <div className="bg-black border border-zinc-800 p-4 space-y-3">
+          <h4 className="text-[10px] uppercase font-bold text-white">Add New Severity Level</h4>
+          
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newSeverity}
+              onChange={e => setNewSeverity(e.target.value)}
+              placeholder="e.g. MINOR, MAJOR, CRITICAL_AUDIT"
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAddSeverity(); }}
+              className="flex-grow bg-black border border-zinc-800 p-2 text-xs text-white uppercase focus:border-orange-500 outline-none"
+            />
+            <button
+              onClick={handleAddSeverity}
+              disabled={!newSeverity.trim()}
+              className="bg-orange-500 hover:bg-orange-400 text-black font-bold px-4 py-2 text-[10px] uppercase tracking-wider transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              <Plus size={11} className="inline mr-1" /> Add Level
+            </button>
+          </div>
+        </div>
+
+        {/* Severity Levels List */}
+        <div className="space-y-2">
+          {ncrSeverities.length === 0 ? (
+            <p className="text-[10px] text-zinc-600 uppercase py-4">No severity levels configured. Add at least one level.</p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {ncrSeverities.map((severity, index) => (
+                <div
+                  key={index}
+                  className="bg-zinc-900 border border-zinc-800 p-3 flex items-center justify-between group hover:border-zinc-700 transition-all"
+                >
+                  <span className="text-xs font-bold text-white uppercase tracking-wider">{severity}</span>
+                  <button
+                    onClick={() => handleRemoveSeverity(severity)}
+                    className="text-zinc-500 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                    title="Remove Severity"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="pt-2 border-t border-zinc-800">
+          <span className="text-[9px] uppercase text-zinc-500 block mb-1">Total Severity Levels:</span>
+          <strong className="text-orange-400 text-xs">{ncrSeverities.length} configured</strong>
         </div>
       </div>
 
