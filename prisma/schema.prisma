@@ -99,6 +99,7 @@ model Setting {
   autoSaves             Boolean @default(true)
   syncFreq              String @default("Real-time Transaction Lock")
   ncrSeverities         String? // Serialized JSON of severity level strings
+  publicUrl             String? // Public-facing URL for resolved file links (e.g. https://yourdomain.com)
 }
 
 model User {

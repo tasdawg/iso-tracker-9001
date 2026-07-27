@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import { PrismaClient } from '@prisma/client';
 
@@ -21,6 +22,85 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: '50mb' }));
 
+// Multer file upload configuration
+const uploadsDir = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+const drawingsDir = path.join(uploadsDir, 'drawings');
+if (!fs.existsSync(drawingsDir)) {
+  fs.mkdirSync(drawingsDir, { recursive: true });
+}
+const csvDir = path.join(uploadsDir, 'csv');
+if (!fs.existsSync(csvDir)) {
+  fs.mkdirSync(csvDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
+      cb(null, csvDir);
+    } else {
+      cb(null, drawingsDir);
+    }
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9-_]/g, '_');
+    const uniqueName = `${base}-${Date.now()}${ext}`;
+    cb(null, uniqueName);
+  }
+});
+
+const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+  const allowedMimes = [
+    'application/pdf',
+    'application/dxf',
+    'application/dwg',
+    'text/csv',
+    'application/vnd.ms-excel',
+    'text/plain'
+  ];
+  const allowedExts = ['.pdf', '.dxf', '.dwg', '.csv', '.txt'];
+  const ext = path.extname(file.originalname).toLowerCase();
+  
+  if (allowedMimes.includes(file.mimetype) || allowedExts.includes(ext)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Allowed: PDF, DXF, DWG, CSV'));
+  }
+};
+
+const upload = multer({ 
+  storage, 
+  fileFilter,
+  limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+});
+
+// Serve uploaded files
+app.use('/uploads', express.static(uploadsDir));
+
+// Upload endpoint
+app.post('/api/upload', upload.single('file'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  
+  const filePath = `/uploads/${req.file.filename}`;
+  const fileSizeKB = Math.round(req.file.size / 1024);
+  const fileSizeStr = fileSizeKB >= 1024 ? `${Math.round(fileSizeKB / 1024)} MB` : `${fileSizeKB} KB`;
+  
+  res.json({
+    success: true,
+    filename: req.file.filename,
+    originalName: req.file.originalname,
+    filePath,
+    fileSize: fileSizeStr,
+    mimetype: req.file.mimetype,
+    size: req.file.size
+  });
+});
+
 // Ensure Setting record exists (seed on first run)
 async function ensureSettingRecord() {
   try {
@@ -37,7 +117,8 @@ async function ensureSettingRecord() {
           concurrentSeats: 25,
           autoSaves: true,
           syncFreq: 'Real-time Transaction Lock',
-          ncrSeverities: undefined as any
+          ncrSeverities: undefined as any,
+          publicUrl: ''
         }
       });
     }
@@ -442,7 +523,8 @@ app.post('/api/sync', async (req, res) => {
           saasTier: settings.saasTier,
           concurrentSeats: parseInt(settings.concurrentSeats, 10) || 25,
           autoSaves: settings.autoSaves !== undefined ? !!settings.autoSaves : true,
-          syncFreq: settings.syncFreq
+          syncFreq: settings.syncFreq,
+          publicUrl: settings.publicUrl || null
         },
         create: {
           id: 'global',
@@ -454,7 +536,8 @@ app.post('/api/sync', async (req, res) => {
           concurrentSeats: parseInt(settings.concurrentSeats, 10) || 25,
           autoSaves: settings.autoSaves !== undefined ? !!settings.autoSaves : true,
           syncFreq: settings.syncFreq || 'Real-time Transaction Lock',
-          ncrSeverities: undefined as any
+          ncrSeverities: undefined as any,
+          publicUrl: settings.publicUrl || null
         }
       });
     }
@@ -695,7 +778,8 @@ app.post('/api/fresh-install', async (req, res) => {
         saasTier: 'Enterprise',
         concurrentSeats: 25,
         autoSaves: true,
-        syncFreq: 'Real-time Transaction Lock'
+        syncFreq: 'Real-time Transaction Lock',
+        publicUrl: ''
       },
       create: {
         id: 'global',
@@ -707,7 +791,8 @@ app.post('/api/fresh-install', async (req, res) => {
         concurrentSeats: 25,
         autoSaves: true,
         syncFreq: 'Real-time Transaction Lock',
-        ncrSeverities: undefined as any
+        ncrSeverities: undefined as any,
+        publicUrl: ''
       }
     });
 

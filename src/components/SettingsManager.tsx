@@ -39,6 +39,7 @@ export default function SettingsManager({
   const [concurrentSeats, setConcurrentSeats] = useState(settings?.concurrentSeats || 25);
   const [autoSaves, setAutoSaves] = useState(settings?.autoSaves !== undefined ? settings.autoSaves : true);
   const [syncFreq, setSyncFreq] = useState(settings?.syncFreq || 'Real-time Transaction Lock');
+  const [publicUrl, setPublicUrl] = useState(settings?.publicUrl || '');
 
   // NCR Severity Levels - initialized from props or defaults
   const [ncrSeverities, setNcrSeverities] = useState<string[]>(() => {
@@ -71,7 +72,8 @@ export default function SettingsManager({
       setConcurrentSeats(settings.concurrentSeats || 25);
       setAutoSaves(settings.autoSaves !== undefined ? settings.autoSaves : true);
       setSyncFreq(settings.syncFreq || 'Real-time Transaction Lock');
-      
+      setPublicUrl(settings.publicUrl || '');
+
       if (settings.ncrSeverities) {
         try {
           setNcrSeverities(JSON.parse(settings.ncrSeverities));
@@ -152,12 +154,13 @@ export default function SettingsManager({
           concurrentSeats,
           autoSaves,
           syncFreq,
+          publicUrl,
           ncrSeverities: JSON.stringify(ncrSeverities)
         });
       }, 500); // Debounce saves by 500ms
       return () => clearTimeout(timeoutId);
     }
-  }, [companyName, accreditationBody, stampCode, facilityLocation, saasTier, concurrentSeats, autoSaves, syncFreq, ncrSeverities]);
+  }, [companyName, accreditationBody, stampCode, facilityLocation, saasTier, concurrentSeats, autoSaves, syncFreq, publicUrl, ncrSeverities]);
 
   // User Management Functions
   const handleAddUser = async () => {
@@ -393,6 +396,7 @@ export default function SettingsManager({
       concurrentSeats,
       autoSaves,
       syncFreq,
+      publicUrl,
       ncrSeverities: JSON.stringify(ncrSeverities)
     });
     
@@ -538,6 +542,20 @@ export default function SettingsManager({
               <div className="bg-black border border-zinc-800 p-2 flex justify-between items-center text-[10px] text-green-400 font-bold uppercase">
                 <span>ONLINE - {syncFreq}</span>
               </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-[9px] uppercase font-bold text-zinc-500">Public URL of Installation</label>
+              <input
+                type="text"
+                className="w-full bg-black border border-zinc-800 p-2.5 text-xs text-white uppercase focus:border-orange-500 outline-none"
+                value={publicUrl}
+                onChange={e => setPublicUrl(e.target.value)}
+                placeholder="https://yourdomain.com"
+              />
+              <p className="text-[9px] text-zinc-600 leading-relaxed uppercase">
+                External URL used to resolve uploaded file links. Leave blank for relative paths (localhost/dev). Required for Cloudflare proxy deployments so drawings and certificates render correctly.
+              </p>
             </div>
           </div>
         </div>

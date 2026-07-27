@@ -1398,6 +1398,7 @@ export default function App() {
                   allMaterials={materials}
                   stations={stations}
                   currentUser={operator}
+                  settings={settings}
                   onUpdateItems={updateItemsState}
                 />
               )}

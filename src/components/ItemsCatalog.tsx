@@ -5,14 +5,15 @@
 
 import React, { useState } from 'react';
 import { Item, Material, Drawing, ProcessTemplate, CutListItem, SubItemRelation, Station } from '../types';
-import { generateNextItemId } from '../utils';
-import { Search, Plus, Trash2, ShieldAlert, FileText, Share2, Layers, CheckSquare, PlusCircle, Paperclip } from 'lucide-react';
+import { generateNextItemId, resolveFileUrl } from '../utils';
+import { Search, Plus, Trash2, ShieldAlert, FileText, Share2, Layers, CheckSquare, PlusCircle, Paperclip, ExternalLink } from 'lucide-react';
 
 interface ItemsCatalogProps {
   items: Item[];
   allMaterials: Material[];
   stations: Station[];
   currentUser: { name: string };
+  settings: any | null;
   onUpdateItems: (updatedItems: Item[]) => void;
 }
 
@@ -21,6 +22,7 @@ export default function ItemsCatalog({
   allMaterials,
   stations,
   currentUser,
+  settings,
   onUpdateItems
 }: ItemsCatalogProps) {
   const [searchTerm, setSearchTerm] = useState('');
@@ -219,7 +221,7 @@ export default function ItemsCatalog({
   };
 
   const handleAddDrawing = () => {
-    setDrawingsReq([...drawingsReq, { name: 'CHASSIS-SECTION.dxf', fileType: 'DXF', fileSize: '1.2 MB', designVersion: 'Rev A' }]);
+    setDrawingsReq([...drawingsReq, { name: '', fileType: 'DXF' as 'DXF' | 'PDF' | 'DWG', fileSize: '', designVersion: '', filePath: undefined }]);
   };
   const handleRemoveDrawing = (idx: number) => {
     setDrawingsReq(drawingsReq.filter((_, i) => i !== idx));
@@ -228,6 +230,42 @@ export default function ItemsCatalog({
     const updated = [...drawingsReq];
     (updated[idx] as any)[field] = val;
     setDrawingsReq(updated);
+  };
+
+  // Upload drawing file to server and populate metadata
+  const handleUploadDrawingFile = async (idx: number, file: File) => {
+    if (!file) return;
+
+    const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    let fileType: 'DXF' | 'PDF' | 'DWG' = 'DXF';
+    if (ext === '.pdf') fileType = 'PDF';
+    else if (ext === '.dwg') fileType = 'DWG';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const result = await res.json();
+      
+      if (!result.success) {
+        alert(result.error || 'Upload failed');
+        return;
+      }
+
+      const updated = [...drawingsReq];
+      updated[idx] = {
+        ...updated[idx],
+        name: file.name,
+        fileType,
+        fileSize: result.fileSize,
+        filePath: result.filePath
+      };
+      setDrawingsReq(updated);
+    } catch (err) {
+      alert('Upload failed. Please try again.');
+      console.error(err);
+    }
   };
 
   const handleAddSubItem = () => {
@@ -269,13 +307,14 @@ export default function ItemsCatalog({
       qtyNeeded: mr.qty
     }));
 
-    const compileDrawings: Drawing[] = drawingsReq.map(dr => ({
+    const compileDrawings: Drawing[] = drawingsReq.filter(dr => dr.name).map(dr => ({
       name: dr.name,
       fileType: dr.fileType,
       fileSize: dr.fileSize,
       uploadDate: new Date().toISOString().split('T')[0],
       uploadedBy: currentUser.name,
-      designVersion: dr.designVersion
+      designVersion: dr.designVersion,
+      filePath: dr.filePath
     }));
 
     const newItem: Item = {
@@ -355,7 +394,6 @@ export default function ItemsCatalog({
       </div>
 
       {showAddForm ? (
-        /* CREATE ITEM FORM */
         <div className="max-w-4xl mx-auto bg-[#1a1a1a] p-8 md:p-10 border border-brand-orange-500/30 text-white space-y-8">
           <div className="pb-4 border-b border-white/5">
             <h3 className="font-serif text-xl font-bold">Standard Assembly Blueprint Modeler</h3>
@@ -740,38 +778,53 @@ export default function ItemsCatalog({
                 <div className="space-y-2">
                   {drawingsReq.map((row, idx) => (
                     <div key={idx} className="grid grid-cols-1 md:grid-cols-4 gap-2 bg-[#090909] p-3 border border-white/5 items-center">
-                      <input
-                        type="text"
-                        placeholder="File name (e.g. FRAME-A3.pdf)"
-                        value={row.name}
-                        onChange={e => handleDwgFieldChange(idx, 'name', e.target.value)}
-                        className="bg-black border border-white/10 p-2 text-xs text-white"
-                      />
-                      <select
-                        value={row.fileType}
-                        onChange={e => handleDwgFieldChange(idx, 'fileType', e.target.value)}
-                        className="bg-black border border-white/10 p-2 text-xs text-white font-mono"
-                      >
-                        <option value="DXF">DXF (CAD file)</option>
-                        <option value="PDF">PDF (Drawing file)</option>
-                        <option value="DWG">DWG (Drawing file)</option>
-                      </select>
-                      <input
-                        type="text"
-                        placeholder="File size (e.g. 1.2 MB)"
-                        value={row.fileSize}
-                        onChange={e => handleDwgFieldChange(idx, 'fileSize', e.target.value)}
-                        className="bg-black border border-white/10 p-2 text-xs text-white font-mono"
-                      />
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[9px] text-gray-500 uppercase font-bold">CAD File</label>
                         <input
-                          type="text"
-                          placeholder="Revision version"
-                          value={row.designVersion}
-                          onChange={e => handleDwgFieldChange(idx, 'designVersion', e.target.value)}
-                          className="bg-black border border-white/10 p-2 text-xs text-center font-mono text-white flex-1"
+                          type="file"
+                          accept=".pdf,.dxf,.dwg"
+                          onChange={e => handleUploadDrawingFile(idx, e.target.files?.[0] || null)}
+                          className="text-[10px] text-white file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-bold file:bg-orange-600 file:text-black hover:file:bg-orange-500 cursor-pointer bg-black border border-white/10 p-1"
                         />
-                        <button type="button" onClick={() => handleRemoveDrawing(idx)} className="text-red-500 hover:text-red-400 p-1">
+                        {row.name && (
+                          <p className="text-[9px] text-gray-400 truncate font-mono">{row.name} ({row.fileSize})</p>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[9px] text-gray-500 uppercase font-bold">File Type</label>
+                        <select
+                          value={row.fileType}
+                          onChange={e => handleDwgFieldChange(idx, 'fileType', e.target.value)}
+                          className="bg-black border border-white/10 p-2 text-xs text-white font-mono"
+                        >
+                          <option value="">Auto-detect</option>
+                          <option value="DXF">DXF</option>
+                          <option value="PDF">PDF</option>
+                          <option value="DWG">DWG</option>
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[9px] text-gray-500 uppercase font-bold">Upload Status</label>
+                        {row.filePath ? (
+                          <p className="text-[10px] text-green-400 font-bold flex items-center gap-1">
+                            ✓ Uploaded to server
+                          </p>
+                        ) : (
+                          <p className="text-[10px] text-gray-500">Not uploaded</p>
+                        )}
+                      </div>
+                      <div className="flex items-end gap-2">
+                        <div className="flex flex-col gap-1 flex-1">
+                          <label className="text-[9px] text-gray-500 uppercase font-bold">Revision</label>
+                          <input
+                            type="text"
+                            placeholder=""
+                            value={row.designVersion}
+                            onChange={e => handleDwgFieldChange(idx, 'designVersion', e.target.value)}
+                            className="bg-black border border-white/10 p-2 text-xs text-center font-mono text-white flex-1"
+                          />
+                        </div>
+                        <button type="button" onClick={() => handleRemoveDrawing(idx)} className="text-red-500 hover:text-red-400 p-2">
                           <Trash2 size={16} />
                         </button>
                       </div>
@@ -806,7 +859,6 @@ export default function ItemsCatalog({
           </form>
         </div>
       ) : selectedItemForDetails ? (
-        /* DETAIL BLUEPRINT VIEW */
         <div className="bg-[#1a1a1a] p-8 border border-white/10 text-white space-y-8 animate-fadeIn">
           <div className="flex justify-between items-start border-b border-white/5 pb-4">
             <div>
@@ -894,16 +946,34 @@ export default function ItemsCatalog({
               {selectedItemForDetails.drawings && selectedItemForDetails.drawings.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {selectedItemForDetails.drawings.map((draw, dIdx) => (
-                    <div key={dIdx} className="p-4 bg-[#0a0a0a] border border-white/10 font-mono text-xs flex justify-between items-center">
+                    <div key={dIdx} className="p-4 bg-[#0a0a0a] border border-white/10 font-mono text-xs flex flex-col justify-between gap-3">
                       <div>
                         <div className="font-bold text-white truncate max-w-[200px]">{draw.name}</div>
                         <div className="text-[10px] text-gray-500 mt-1 uppercase font-sans">
                           {draw.fileType} file &bull; Size: {draw.fileSize} &bull; ver: <strong className="text-brand-orange-400">{draw.designVersion}</strong>
                         </div>
                       </div>
-                      <span className="text-[10px] text-[#D9823B] bg-brand-orange-500/10 border border-[#C8620A]/20 px-2.5 py-1 uppercase font-bold font-sans">
-                        ATTACHED
-                      </span>
+                      <div className="flex justify-between items-center pt-2 border-t border-white/5">
+                        {draw.filePath ? (
+                          <a
+                            href={resolveFileUrl(draw.filePath, settings?.publicUrl || '')}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[10px] text-brand-orange-500 hover:text-brand-orange-400 font-bold uppercase tracking-wider flex items-center gap-1 transition-colors"
+                          >
+                            View File <ExternalLink size={12} />
+                          </a>
+                        ) : (
+                          <span className="text-[10px] text-gray-600 italic">No file uploaded</span>
+                        )}
+                        <span className={`text-[10px] px-2.5 py-1 uppercase font-bold font-sans ${
+                          draw.filePath 
+                            ? 'text-green-400 bg-green-500/10 border border-green-500/20' 
+                            : 'text-[#D9823B] bg-brand-orange-500/10 border border-[#C8620A]/20'
+                        }`}>
+                          {draw.filePath ? 'UPLOADED' : 'ATTACHED'}
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </div>

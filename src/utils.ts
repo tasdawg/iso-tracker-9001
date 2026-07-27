@@ -166,3 +166,15 @@ export function generateNextLogId(logs: InventoryLog[]): string {
   return generateNextId('LOG', logs.map(l => l.id));
 }
 
+// Resolve a file path to a full URL using the configured publicUrl setting.
+// If publicUrl is set and filePath is a relative /uploads/... path, prepends it.
+// Otherwise returns the path as-is (works for absolute URLs and localhost/dev).
+export function resolveFileUrl(filePath: string | undefined | null, publicUrl: string): string {
+  if (!filePath) return '';
+  if (publicUrl && filePath.startsWith('/uploads/')) {
+    const base = publicUrl.replace(/\/$/, '');
+    return `${base}${filePath}`;
+  }
+  return filePath;
+}
+
