@@ -7,3 +7,18 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Database files (SQLite)
+prisma/dev.db
+prisma/*.db
+prisma/backups/
+
+# Uploaded files (drawings, CSVs, certs)
+uploads/
+
+# OS / editor artifacts
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

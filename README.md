@@ -75,3 +75,137 @@ No separate `vite dev` step — `npm run dev` serves both the React UI and REST 
 - HMR is disabled when `DISABLE_HMR=true` (set by AI Studio). If edits don't hot-reload, check that env var.
 - User deletion fails if any process in any project still references them via `assignedUserId`.
 - Station deletion is soft-delete only — it sets `isActive: false`, never removes the row.
+
+## Docker Deployment
+
+A production-ready Docker Compose setup with **auto-update from GitHub**, **database backup before every update**, and **schema migration support**.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Multi-stage build (builder → runtime). Final image contains only compiled artifacts + prod deps. |
+| `docker-compose.yml` | Service definition with persistent volumes, healthcheck, restart policy. |
+| `entrypoint.sh` | Startup script: version tracking, git updates, DB backup, migration detection, rebuild. |
+| `.dockerignore` | Excludes source/dev files from build context to keep image small. |
+
+### Quick start
+
+```bash
+# 1. Edit docker-compose.yml — set your actual GitHub repo URL (GIT_REPO)
+# 2. Build and launch
+docker compose up -d --build
+
+# 3. Watch logs for update/migration output
+docker compose logs -f iso-tracker
+
+# 4. Access the app at http://localhost:3000
+```
+
+### Startup flow
+
+```
+Container starts → entrypoint.sh runs
+        │
+        ├─ 1. Enable SQLite WAL mode (if DB exists)
+        │     → prevents "database is locked" errors under concurrent reads
+        │
+        ├─ 2. Check if GIT_REPO is configured
+        │     └─ If not set → skip updates, start server immediately
+        │
+        ├─ 3. Initialize .container-version file (first-run tracking)
+        │
+        ├─ 4. git fetch origin main
+        │     ├─ FAIL (network down, repo unreachable) → log warning, run current code
+        │     └─ SUCCESS → compare commit hash vs stored version
+        │
+        ├─ 5. Version comparison
+        │     ├─ SAME → no update needed, start server immediately
+        │     └─ DIFFERENT → full update sequence:
+        │
+        ├─ 6a. BACKUP database (before ANY changes)
+        │       ├── Copy dev.db → backups/dev.db-YYYYMMDD-HHMMSS.bck
+        │       ├── Verify backup is non-empty; if empty, ABORT update
+        │       └── Rotate old backups — keep last 14, delete the rest
+        │
+        ├─ 6b. git pull origin main
+        │     ├─ FAIL → restore DB from backup, exit with error code 1
+        │     └─ SUCCESS → continue
+        │
+        ├─ 6c. Detect schema changes (md5 of prisma/schema.prisma)
+        │     ├─ Changed + migrations exist → prisma migrate deploy
+        │     │   └─ FAIL → restore DB from backup, exit with error code 1
+        │     ├─ Changed + no migrations → warn user, attempt direct alter
+        │     └─ Unchanged → skip migration entirely
+        │
+        ├─ 6d. Rebuild application
+        │       ├── npm ci --omit=dev (fresh prod deps)
+        │       ├── prisma generate (regenerate client for new schema)
+        │       ├── vite build + esbuild server.ts → dist/server.cjs
+        │       └─ Any FAIL → restore DB from backup, exit with error code 1
+        │
+        ├─ 7. Update .container-version with new commit hash
+        │
+        └─ 8. exec node dist/server.cjs (replaces shell process for signal handling)
+```
+
+### Failure modes and solutions
+
+| Scenario | What happens | Recovery |
+|----------|-------------|----------|
+| **Network down during `git fetch`** | Fetch fails, logs warning, skips update | No data loss — runs currently deployed code. Features won't be new until network returns. |
+| **Git pull fails (merge conflict / auth)** | Pull fails, DB restored from backup, container exits with code 1 | Docker `restart: unless-stopped` restarts it next cycle. Fix the git issue and redeploy. |
+| **Schema migration fails** (`prisma migrate deploy`) | Migration error detected, DB restored from pre-update backup, exit code 1 | DB is intact at pre-migration state. Create proper migrations locally with `npx prisma migrate dev`, push to repo, container picks them up on next restart. |
+| **Build fails** (esbuild / vite / prisma generate) | Build error detected, DB restored from backup, exit code 1 | DB intact. Fix the build issue in your code, push to repo, redeploy. |
+| **Backup file is empty** (disk full / permission issue) | Detected by size check, update aborted before any code changes | No partial state — container continues with previous working version. |
+| **Container killed mid-update** | Partial state possible on disk | Next restart detects version mismatch, backs up current (possibly partial) DB, retries from backup. |
+| **SQLite "database is locked"** | WAL mode + 30s busy_timeout prevents this at both runtime and entrypoint level | Concurrent reads work fine. Single-writer design means writes are serialized naturally. |
+| **Stale node_modules after update** | `npm ci --omit=dev` always runs on every update, reinstalling from lockfile | Fresh, deterministic deps every time. No drift between containers. |
+| **Prisma client/schema mismatch** | `prisma generate` always runs after schema change or full rebuild | Client is regenerated to match the current schema.prisma before server starts. |
+| **First run (no .container-version file)** | Initializes version tracking, skips git comparison on truly first boot | No unnecessary network calls on initial deployment. |
+| **Private repo authentication** | HTTPS clone fails without credentials | Mount SSH key or pass `GITHUB_TOKEN` env var (see below). |
+| **Horizontal scaling (multiple containers)** | SQLite doesn't support concurrent writes from multiple processes | Single-container design. For scaling, migrate to PostgreSQL (requires schema changes). |
+
+### Running and maintenance
+
+```bash
+# Trigger an update manually (container will check on restart)
+docker compose restart iso-tracker
+
+# View database backups inside the container
+docker exec iso-tracker ls -la /app/prisma/backups/
+
+# Restore from a specific backup if needed
+docker exec iso-tracker cp /app/prisma/backups/dev.db-20260727-120000.bck /app/prisma/dev.db
+docker compose restart iso-tracker
+
+# View update/migration logs
+docker compose logs -f iso-tracker | grep -E "UPDATE|BACKUP|MIGRATE|BUILD"
+```
+
+### For private repositories (optional)
+
+**Option A — GitHub Token (simplest):**
+Add to `docker-compose.yml` environment section:
+```yaml
+- GITHUB_TOKEN=ghp_your_token_here
+```
+
+**Option B — SSH key (more secure, recommended for teams):**
+```yaml
+volumes:
+  - ./ssh/id_ed25519:/root/.ssh/id_ed25519:ro
+environment:
+  GIT_REPO: git@github.com:YOUR_USERNAME/iso-tracker.git
+```
+
+### Schema migrations best practice
+
+For safe schema changes between versions, always create formal Prisma migrations before deploying:
+
+```bash
+# Locally, before pushing to GitHub:
+npx prisma migrate dev --name add_your_change_description
+```
+
+This creates migration files in `prisma/migrations/` that the Docker entrypoint will automatically detect and apply on the next container restart. Without these files, Prisma attempts direct table alterations which may cause data loss.
