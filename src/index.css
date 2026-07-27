@@ -9,6 +9,13 @@
   --color-brand-orange-500: #f97316;
   --color-brand-orange-400: #fb923c;
   --color-brand-orange-600: #ea580c;
+
+  --animation-flash-pulse: flashPulse 1s ease-in-out 3;
+}
+
+@keyframes flashPulse {
+  0%, 100% { box-shadow: 0 0 0 0px rgba(168, 85, 247, 0.4); }
+  50% { box-shadow: 0 0 20px 4px rgba(168, 85, 247, 0.25); }
 }
 
 body {

@@ -17,7 +17,12 @@ interface PrePageProps {
   currentOperator: User;
   activeStage: string;
   stations: Station[];
+  settings?: any | null;
+  onUsersChange?: (users: User[]) => void;
   onInduct: (user: User, stage: string, projectId?: string) => void;
+  onManagerMode: (user: User) => void;
+  onUpdateProject: (updatedProject: Project) => void;
+  onNavigateToProject: (user: User, stage: string, projectId: string, subIdx: number, procIdx: number) => void;
   projects: Project[];
   items: Item[];
   materials: Material[];
@@ -30,7 +35,12 @@ export default function PrePage({
   currentOperator,
   activeStage,
   stations,
+  settings,
+  onUsersChange,
   onInduct,
+  onManagerMode,
+  onUpdateProject,
+  onNavigateToProject,
   projects,
   items,
   materials,
@@ -48,12 +58,23 @@ export default function PrePage({
     if (allUsers.length > 0) {
       const savedId = localStorage.getItem('operator_id');
       const found = savedId ? allUsers.find(u => u.id === savedId) : null;
-      setSelectedUser(found || allUsers[2]); // Default to Jack Thompson (Worker)
+      const newUser = found || allUsers[2]; // Default to Jack Thompson (Worker)
+      setSelectedUser(newUser);
+      if (!activeStage) {
+        setSelectedStage(newUser.role === 'Worker' ? 'Assigned' : 'All Stages');
+      }
     }
   }, [allUsers]);
-  
-  // Build stages list from database stations + "All Stages" option
-  const standardStages = ['All Stages', ...stations.map(s => s.name)];
+
+  // Clock tick for live elapsed time display in worker loadout
+  const [nowTime, setNowTime] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowTime(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Build stages list: "Assigned" + database stations + "All Stages"
+  const standardStages = ['Assigned', ...stations.map(s => s.name), 'All Stages'];
 
   const [selectedStage, setSelectedStage] = useState<string>(activeStage || 'All Stages');
   const [isEnteringStock, setIsEnteringStock] = useState(false);
@@ -63,7 +84,7 @@ export default function PrePage({
   const handlePinSubmit = () => {
     if (pinInput === '2026') {
       setShowPinModal(false);
-      onInduct(selectedUser!, 'All Stages', selectedProjectId || undefined);
+      onManagerMode(selectedUser!);
     } else {
       setPinError('INVALID PIN CODE • ACCESS DENIED');
       setPinInput('');
@@ -101,6 +122,26 @@ export default function PrePage({
       p.batchNo.toLowerCase().includes(projectSearch.toLowerCase()) ||
       p.id.toLowerCase().includes(projectSearch.toLowerCase()) ||
       (p.jobCode && p.jobCode.toLowerCase().includes(projectSearch.toLowerCase()))
+    );
+  });
+
+  // Role + stage-filtered projects:
+  // - Admin/Production Manager: always see all active non-completed projects
+  // - Worker on "Assigned": only projects where they have at least one assigned process
+  // - Worker on a specific station: all projects with that station's process (any assignee)
+  // - Worker on "All Stages": all active non-completed projects
+  const isManager = selectedUser?.role === 'Admin' || selectedUser?.role === 'Production Manager';
+  const displayedProjects = searchedProjects.filter(proj => {
+    if (proj.status === 'Completed') return false;
+    if (isManager) return true;
+    if (selectedStage === 'Assigned') {
+      return proj.subProjects?.some(sub =>
+        sub.processes?.some(proc => proc.assignedUserId === selectedUser?.id)
+      );
+    }
+    if (selectedStage === 'All Stages') return true;
+    return proj.subProjects?.some(sub =>
+      sub.processes?.some(proc => proc.name === selectedStage)
     );
   });
 
@@ -216,7 +257,7 @@ export default function PrePage({
     });
   });
 
-  const activeProjectRun = projects.find(p => p.id === selectedProjectId && !p.isDeleted);
+  const activeProjectRun = projects.find(p => p.id === selectedProjectId && p.notVisible !== 1);
 
   return (
     <div className="min-h-screen bg-black text-[#d1d5db] font-sans antialiased flex flex-col justify-start items-center p-4 sm:p-6 md:p-8 relative overflow-y-auto">
@@ -526,7 +567,7 @@ export default function PrePage({
                 <div className="space-y-3 pt-3 border-t border-white/5">
                   <label className="text-xs uppercase tracking-widest font-black text-white flex items-center gap-1.5">
                     <Bolt size={14} className="text-[#f97316]" />
-                    Step 2: Assign Work Station Stage
+                    Step 2: Select View Mode
                   </label>
                   <div className="grid grid-cols-4 gap-1.5 max-h-48 overflow-y-auto pr-0.5">
                     {standardStages.map((stage) => {
@@ -545,7 +586,7 @@ export default function PrePage({
                           <span className={`text-[8px] font-bold uppercase tracking-wider leading-tight ${
                             isSelected ? 'text-[#f97316]' : 'text-zinc-400'
                           }`}>
-                            {stage === 'All Stages' ? 'ALL STAGES' : stage.toUpperCase()}
+                            {stage === 'Assigned' ? 'MY ASSIGNED' : stage === 'All Stages' ? 'ALL STAGES' : stage.toUpperCase()}
                           </span>
                         </button>
                       );
@@ -553,19 +594,202 @@ export default function PrePage({
                   </div>
                 </div>
 
-                {/* Selected Status overview */}
-                <div className="p-3 bg-black border border-white/5 flex justify-between items-center text-[10px] font-mono leading-none">
-                  <div>
-                    <span className="text-zinc-500 uppercase font-black block mb-1">Worker loadout</span>
-                    <strong className="text-white text-[11px] font-sans">{selectedUser?.name || '—'}</strong>
+                {/* Worker loadout with active timer tasks */}
+                <div className="space-y-2">
+                    <div className="p-3 bg-black border border-white/5 flex justify-between items-center text-[10px] font-mono leading-none">
+                      <div>
+                        <span className="text-zinc-500 uppercase font-black block mb-1">Worker loadout</span>
+                        <strong className="text-white text-[11px] font-sans">{selectedUser?.name || '—'}</strong>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[#fb923c] font-bold block mb-1">
+                          {assignedCount} Tasks Assigned
+                        </span>
+                        <span className="text-zinc-500 text-[8px] uppercase">({inProgressCount} in progress)</span>
+                      </div>
+                    </div>
+
+                    {/* Active timer tasks for selected worker */}
+                    {(() => {
+                      const activeTasks: {
+                        projId: string;
+                        projTitle: string;
+                        subIdx: number;
+                        procIdx: number;
+                        procName: string;
+                        elapsedSeconds: number;
+                        autoStopped: boolean;
+                      }[] = [];
+
+                      (projects || []).forEach(proj => {
+                        if (proj.notVisible === 1) return;
+                        (proj.subProjects || []).forEach((sub, sIdx) => {
+                          (sub.processes || []).forEach((proc, pIdx) => {
+                            if (proc.assignedUserId === selectedUser?.id && proc.status === 'In Progress') {
+                              if (proc.timerStart) {
+                                const elapsed = (proc.accumulatedSeconds || 0) + Math.floor((nowTime - proc.timerStart) / 1000);
+                                activeTasks.push({
+                                  projId: proj.id,
+                                  projTitle: proj.title,
+                                  subIdx: sIdx,
+                                  procIdx: pIdx,
+                                  procName: proc.name,
+                                  elapsedSeconds: elapsed,
+                                  autoStopped: !!proc.autoStopped,
+                                });
+                              }
+                            }
+                          });
+                        });
+                      });
+
+                      const pendingTasks: {
+                        projId: string;
+                        projTitle: string;
+                        subIdx: number;
+                        procIdx: number;
+                        procName: string;
+                      }[] = [];
+
+                      (projects || []).forEach(proj => {
+                        if (proj.notVisible === 1) return;
+                        (proj.subProjects || []).forEach((sub, sIdx) => {
+                          (sub.processes || []).forEach((proc, pIdx) => {
+                            if (proc.assignedUserId === selectedUser?.id && proc.status === 'Pending') {
+                              pendingTasks.push({
+                                projId: proj.id,
+                                projTitle: proj.title,
+                                subIdx: sIdx,
+                                procIdx: pIdx,
+                                procName: proc.name,
+                              });
+                            }
+                          });
+                        });
+                      });
+
+                      const formatElapsed = (totalSeconds: number) => {
+                        const hrs = Math.floor(totalSeconds / 3600);
+                        const mins = Math.floor((totalSeconds % 3600) / 60);
+                        const secs = totalSeconds % 60;
+                        return `${hrs > 0 ? `${hrs}h ` : ''}${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
+                      };
+
+                      if (activeTasks.length === 0 && pendingTasks.length === 0) return null;
+
+                      const handlePauseTimer = (projId: string, sIdx: number, pIdx: number) => {
+                        const proj = projects.find(p => p.id === projId);
+                        if (!proj) return;
+                        const nextSubProjects = [...proj.subProjects];
+                        const subProj = { ...nextSubProjects[sIdx] };
+                        const procs = [...subProj.processes];
+                        const proc = { ...procs[pIdx] };
+                        if (proc.timerStart && !proc.autoStopped) {
+                          const elapsedMs = nowTime - proc.timerStart;
+                          const elapsedSecs = Math.floor(elapsedMs / 1000);
+                          proc.accumulatedSeconds = (proc.accumulatedSeconds || 0) + elapsedSecs;
+                          proc.timerStart = undefined;
+                          procs[pIdx] = proc;
+                          subProj.processes = procs;
+                          nextSubProjects[sIdx] = subProj;
+                          onUpdateProject({ ...proj, subProjects: nextSubProjects });
+                        }
+                      };
+
+                      const handleStopTimer = (projId: string, sIdx: number, pIdx: number) => {
+                        const proj = projects.find(p => p.id === projId);
+                        if (!proj) return;
+                        const nextSubProjects = [...proj.subProjects];
+                        const subProj = { ...nextSubProjects[sIdx] };
+                        const procs = [...subProj.processes];
+                        const proc = { ...procs[pIdx] };
+                        if (proc.timerStart && !proc.autoStopped) {
+                          const elapsedMs = nowTime - proc.timerStart;
+                          const elapsedSecs = Math.floor(elapsedMs / 1000);
+                          proc.accumulatedSeconds = (proc.accumulatedSeconds || 0) + elapsedSecs;
+                        }
+                        proc.timerStart = undefined;
+                        procs[pIdx] = proc;
+                        subProj.processes = procs;
+                        nextSubProjects[sIdx] = subProj;
+                        onUpdateProject({ ...proj, subProjects: nextSubProjects });
+                      };
+
+                      return (
+                        <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                          {activeTasks.length > 0 && (
+                            <>
+                              <span className="text-[8px] text-zinc-500 uppercase font-black tracking-wider block">Active Shifts</span>
+                              {activeTasks.map((task, idx) => (
+                                <div key={`${task.projId}-${task.subIdx}-${task.procIdx}`} className={`p-2 border transition-all ${
+                                  task.autoStopped 
+                                    ? 'bg-red-950/20 border-red-800/40' 
+                                    : 'bg-[#0e0e0e]/60 border-white/10 hover:border-orange-500/30'
+                                }`}>
+                                  <div className="flex justify-between items-start">
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-[9px] font-bold text-white uppercase truncate">{task.procName}</p>
+                                      <p className="text-[8px] text-zinc-500 font-mono truncate">{task.projTitle} • {task.projId}</p>
+                                    </div>
+                                    <span className={`text-[9px] font-black font-mono ml-2 shrink-0 ${
+                                      task.autoStopped ? 'text-red-400' : 'text-orange-400'
+                                    }`}>
+                                      {formatElapsed(task.elapsedSeconds)}
+                                    </span>
+                                  </div>
+                                  <div className="flex gap-1 mt-1.5">
+                                    {!task.autoStopped && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handlePauseTimer(task.projId, task.subIdx, task.procIdx)}
+                                          className="px-2 py-0.5 bg-yellow-900/30 hover:bg-yellow-800/50 text-yellow-400 border border-yellow-700/40 text-[8px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                                        >
+                                          Pause
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleStopTimer(task.projId, task.subIdx, task.procIdx)}
+                                          className="px-2 py-0.5 bg-red-900/30 hover:bg-red-800/50 text-red-400 border border-red-700/40 text-[8px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                                        >
+                                          Stop
+                                        </button>
+                                      </>
+                                    )}
+                                    {task.autoStopped && (
+                                      <span className="text-[8px] text-red-400 font-bold uppercase">Auto-stopped at 9h</span>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </>
+                          )}
+
+                          {pendingTasks.length > 0 && (
+                            <>
+                              <span className="text-[8px] text-zinc-500 uppercase font-black tracking-wider block pt-2">Assigned — Not Started</span>
+                              {pendingTasks.map((task, idx) => (
+                                <button
+                                  key={`${task.projId}-${task.subIdx}-${task.procIdx}`}
+                                  type="button"
+                                  onClick={() => onNavigateToProject(selectedUser!, selectedStage, task.projId, task.subIdx, task.procIdx)}
+                                  className="w-full p-2 border border-purple-500/30 bg-purple-950/10 hover:bg-purple-900/20 hover:border-purple-400/50 transition-all text-left cursor-pointer"
+                                >
+                                  <div className="flex justify-between items-start">
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-[9px] font-bold text-white uppercase truncate">{task.procName}</p>
+                                      <p className="text-[8px] text-zinc-500 font-mono truncate">{task.projTitle} • {task.projId}</p>
+                                    </div>
+                                    <span className="text-[8px] text-purple-400 font-black uppercase shrink-0 ml-2">Not Started</span>
+                                  </div>
+                                </button>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
-                  <div className="text-right">
-                    <span className="text-[#fb923c] font-bold block mb-1">
-                      {assignedCount} Tasks Assigned
-                    </span>
-                    <span className="text-zinc-500 text-[8px] uppercase">({inProgressCount} in progress)</span>
-                  </div>
-                </div>
               </>
             )}
           </div>
@@ -597,7 +821,7 @@ export default function PrePage({
 
               {/* Interactive feed of redesigned project traveler cards */}
               <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                {searchedProjects.map((proj) => {
+                {displayedProjects.map((proj) => {
                   const isSelected = selectedProjectId === proj.id;
                   
                   // Compute simple completions
@@ -610,6 +834,37 @@ export default function PrePage({
                     });
                   });
                   const completionPercentage = stepsTotal > 0 ? Math.round((stepsDone / stepsTotal) * 100) : 0;
+
+                  // Compute assigned workers with active timers
+                  let totalAssigned = 0;
+                  let activeTimers = 0;
+                  const activeWorkers: { name: string; elapsedSeconds: number }[] = [];
+                  const formatElapsed = (totalSeconds: number) => {
+                    const hrs = Math.floor(totalSeconds / 3600);
+                    const mins = Math.floor((totalSeconds % 3600) / 60);
+                    const secs = totalSeconds % 60;
+                    return `${hrs > 0 ? `${hrs}h ` : ''}${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
+                  };
+                  (proj.subProjects || []).forEach(sub => {
+                    (sub.processes || []).forEach(p => {
+                      if (p && p.assignedUserId) {
+                        totalAssigned++;
+                        if (p.timerStart) {
+                          activeTimers++;
+                          const elapsed = (p.accumulatedSeconds || 0) + Math.floor((Date.now() - p.timerStart) / 1000);
+                          const workerName = allUsers.find(u => u.id === p.assignedUserId)?.name;
+                          if (workerName) {
+                            const existing = activeWorkers.find(w => w.name === workerName);
+                            if (existing) {
+                              existing.elapsedSeconds += elapsed;
+                            } else {
+                              activeWorkers.push({ name: workerName, elapsedSeconds: elapsed });
+                            }
+                          }
+                        }
+                      }
+                    });
+                  });
 
                   return (
                     <button
@@ -640,6 +895,27 @@ export default function PrePage({
                         </p>
                       </div>
 
+                      {/* Workers Assigned with active timers */}
+                      {(totalAssigned > 0) && (
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[8px] text-zinc-400 font-mono">
+                            <span className="uppercase font-bold">WORKERS ASSIGNED:</span>
+                            <span className={`font-bold ${activeTimers > 0 ? 'text-orange-400' : 'text-zinc-500'}`}>
+                              {activeTimers}/{totalAssigned} Active
+                            </span>
+                          </div>
+                          {activeWorkers.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {activeWorkers.map(w => (
+                                <span key={w.name} className="text-[8px] text-zinc-400 font-mono bg-black px-1 py-0.5 border border-orange-500/20">
+                                  {w.name} <span className="text-orange-400 font-bold ml-1">{formatElapsed(w.elapsedSeconds)}</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {/* Micro progress line */}
                       <div className="space-y-1">
                         <div className="flex items-center justify-between text-[8px] text-zinc-400 font-mono">
@@ -664,9 +940,9 @@ export default function PrePage({
                   );
                 })}
 
-                {searchedProjects.length === 0 && (
+                {displayedProjects.length === 0 && (
                   <div className="text-center py-10 border border-dashed border-white/5 text-[10px] text-zinc-600 font-mono">
-                    NO COMPLIANCE PROJECT RECORDS DETECTED FOR YOUR FILTER EXCELLENCE
+                    {selectedStage !== 'All Stages' ? `NO PROJECTS FOUND WITH "${selectedStage}" PROCESS • SWITCH TO "ALL STAGES" TO VIEW ALL RUNS` : 'NO COMPLIANCE PROJECT RECORDS DETECTED FOR YOUR FILTER EXCELLENCE'}
                   </div>
                 )}
               </div>

@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Project, Item, Material, User, SubProject, SubProjectProcess } from '../types';
 import { 
   HardHat, ShieldCheck, ClipboardCheck, ArrowLeft, Clock,
-  Layers, Box, Settings, CheckCircle2, AlertTriangle, ExternalLink, RefreshCw, FileText
+  Layers, Box, Settings, CheckCircle2, AlertTriangle, ExternalLink, RefreshCw, FileText, ShieldAlert
 } from 'lucide-react';
 
 interface SimpleProjectPageProps {
@@ -31,6 +31,146 @@ export default function SimpleProjectPage({
 }: SimpleProjectPageProps) {
   const [operatorNotes, setOperatorNotes] = useState<string>('');
   const [notesSavedMsg, setNotesSavedMsg] = useState<string | null>(null);
+
+  // Flash highlight for task navigated from PrePage (purple pulse)
+  const [flashTaskKey, setFlashTaskKey] = useState<string | null>(() => {
+    const saved = localStorage.getItem('flash_task_idx');
+    if (saved) {
+      localStorage.removeItem('flash_task_idx');
+      return saved;
+    }
+    return null;
+  });
+  useEffect(() => {
+    if (!flashTaskKey) return;
+    const timeout = setTimeout(() => setFlashTaskKey(null), 6000);
+    return () => clearTimeout(timeout);
+  }, [flashTaskKey]);
+
+  // Clock tick state for live elapsed time display
+  const [nowTime, setNowTime] = useState(Date.now());
+  useEffect(() => {
+    const interval = setInterval(() => setNowTime(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Overtime reason input state per process (keyed by "subIdx-procIdx")
+  const [overtimeReasons, setOvertimeReasons] = useState<Record<string, string>>({});
+
+  // Format seconds to human-readable duration
+  const formatDuration = (totalSeconds: number) => {
+    const hrs = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+    return `${hrs}h ${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
+  };
+
+  // Get elapsed seconds for a process (wall-clock from timerStart)
+  const getElapsedForProcess = (proc: SubProjectProcess) => {
+    if (!proc.timerStart) return 0;
+    return Math.floor((nowTime - proc.timerStart) / 1000);
+  };
+
+  // Pause timer for a process (accumulate elapsed, clear timerStart without completing)
+  const handlePauseTimer = (sIdx: number, pIdx: number) => {
+    const proc = project.subProjects[sIdx].processes[pIdx];
+    if (!canActOnProcess(proc)) return;
+    const nextSubProjects = [...project.subProjects];
+    const subProj = { ...nextSubProjects[sIdx] };
+    const procs = [...subProj.processes];
+    const updatedProc = { ...procs[pIdx] };
+    if (updatedProc.timerStart && !updatedProc.autoStopped) {
+      const elapsedMs = nowTime - updatedProc.timerStart;
+      const elapsedSecs = Math.floor(elapsedMs / 1000);
+      updatedProc.accumulatedSeconds = (updatedProc.accumulatedSeconds || 0) + elapsedSecs;
+      updatedProc.timerStart = undefined;
+      procs[pIdx] = updatedProc;
+      subProj.processes = procs;
+      nextSubProjects[sIdx] = subProj;
+      onUpdateProject({ ...project, subProjects: nextSubProjects });
+    }
+  };
+
+  // Continue timer for a paused process (restart wall-clock from current time)
+  const handleContinueTimer = (sIdx: number, pIdx: number) => {
+    const proc = project.subProjects[sIdx].processes[pIdx];
+    if (!canActOnProcess(proc)) return;
+    const nextSubProjects = [...project.subProjects];
+    const subProj = { ...nextSubProjects[sIdx] };
+    const procs = [...subProj.processes];
+    const updatedProc = { ...procs[pIdx] };
+    if (!updatedProc.timerStart && !updatedProc.autoStopped) {
+      updatedProc.timerStart = Date.now();
+      procs[pIdx] = updatedProc;
+      subProj.processes = procs;
+      nextSubProjects[sIdx] = subProj;
+      onUpdateProject({ ...project, subProjects: nextSubProjects });
+    }
+  };
+
+  // Stop button — completes the task (same as clicking COMPLETED)
+  const handleStopCompleteTask = (sIdx: number, pIdx: number) => {
+    const proc = project.subProjects[sIdx].processes[pIdx];
+    if (!canActOnProcess(proc)) return;
+    handleToggleProcess(sIdx, pIdx);
+  };
+
+  // Check for auto-stopped processes (wall-clock > 9 hours)
+  const OVERTIME_THRESHOLD_MS = 9 * 3600 * 1000;
+  useEffect(() => {
+    let changed = false;
+    const updatedSubProjects = project.subProjects?.map((sub, sIdx) => {
+      if (!sub.processes) return sub;
+      const updatedProcs = sub.processes.map((proc, pIdx) => {
+        if (proc.status === 'In Progress' && proc.timerStart && !proc.autoStopped) {
+          const elapsedMs = nowTime - proc.timerStart;
+          if (elapsedMs > OVERTIME_THRESHOLD_MS) {
+            changed = true;
+            return { ...proc, autoStopped: true };
+          }
+        }
+        return proc;
+      });
+      return { ...sub, processes: updatedProcs };
+    });
+    if (changed) {
+      onUpdateProject({ ...project, subProjects: updatedSubProjects });
+    }
+  }, [nowTime, project]);
+
+  // Save overtime reason for a specific process
+  const handleSaveOvertimeReason = (sIdx: number, pIdx: number, reason: string) => {
+    if (!reason.trim()) return;
+    const nextSubProjects = [...project.subProjects];
+    const subProj = { ...nextSubProjects[sIdx] };
+    const procs = [...subProj.processes];
+    const proc = { ...procs[pIdx] };
+    proc.overtimeReason = reason.trim();
+    procs[pIdx] = proc;
+    subProj.processes = procs;
+    nextSubProjects[sIdx] = subProj;
+    onUpdateProject({ ...project, subProjects: nextSubProjects });
+    setOvertimeReasons(prev => {
+      const next = { ...prev };
+      delete next[`${sIdx}-${pIdx}`];
+      return next;
+    });
+  };
+
+  // Get auto-stopped processes for alert display
+  const getAutoStoppedProcesses = () => {
+    const results: { sIdx: number; pIdx: number; proc: SubProjectProcess }[] = [];
+    (project.subProjects || []).forEach((sub, sIdx) => {
+      (sub.processes || []).forEach((proc, pIdx) => {
+        if (proc.autoStopped && proc.status === 'In Progress') {
+          results.push({ sIdx, pIdx, proc });
+        }
+      });
+    });
+    return results;
+  };
+
+  const autoStoppedProcesses = getAutoStoppedProcesses();
 
   // Filter out the unique required materials for this project dynamically
   const getBOMRequirements = () => {
@@ -85,6 +225,12 @@ export default function SimpleProjectPage({
   });
   const projectProgress = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
 
+  // Lockout check: can current user act on this process?
+  const canActOnProcess = (proc: SubProjectProcess): boolean => {
+    if (currentUser.role === 'Admin' || currentUser.role === 'Production Manager') return true;
+    return proc.assignedUserId === currentUser.id;
+  };
+
   // Toggle stage completion
   const handleToggleProcess = (subIdx: number, procIdx: number) => {
     const nextSubProjects = [...project.subProjects];
@@ -103,12 +249,39 @@ export default function SimpleProjectPage({
 
     targetProcess.status = nextStatus;
     
+    if (nextStatus === 'In Progress' && !targetProcess.timerStart) {
+      // Start wall-clock timer when marking in-progress
+      targetProcess.timerStart = Date.now();
+      targetProcess.autoStopped = false;
+      targetProcess.overtimeReason = undefined;
+    }
+
     if (nextStatus === 'Completed') {
       targetProcess.completionDate = new Date().toISOString().split('T')[0];
       targetProcess.checkedByUserId = currentUser.id;
       // Auto-assign worker to this process step if currently empty
       if (!targetProcess.assignedUserId) {
         targetProcess.assignedUserId = currentUser.id;
+      }
+      // Track second operator (admin/manager completing on behalf of assigned user)
+      if ((currentUser.role === 'Admin' || currentUser.role === 'Production Manager') 
+          && targetProcess.assignedUserId !== currentUser.id 
+          && targetProcess.status !== 'Pending') {
+        targetProcess.secondOperatorId = currentUser.id;
+        targetProcess.secondCompletionDate = new Date().toISOString().split('T')[0];
+      }
+      // Calculate total wall-clock elapsed and append to notes
+      if (targetProcess.timerStart) {
+        const elapsedSeconds = Math.floor((Date.now() - targetProcess.timerStart) / 1000);
+        const formattedDuration = formatDuration(elapsedSeconds);
+        const timeNote = ` [Wall-clock duration: ${formattedDuration}]`;
+        targetProcess.notes = targetProcess.notes 
+          ? `${targetProcess.notes}${timeNote}` 
+          : `Time tracked: ${formattedDuration}. [Shift login check]`;
+        if (targetProcess.autoStopped && targetProcess.overtimeReason) {
+          targetProcess.notes += ` | Auto-stopped at 9h. Reason: ${targetProcess.overtimeReason}`;
+        }
+        targetProcess.timerStart = undefined;
       }
     } else {
       targetProcess.completionDate = undefined;
@@ -472,16 +645,23 @@ export default function SimpleProjectPage({
                         const isStepCompleted = proc.status === 'Completed';
                         const isStepWorking = proc.status === 'In Progress';
                         const assignedWorker = allUsers.find(u => u.id === proc.assignedUserId);
+                        const flashKey = `${sIdx}-${pIdx}`;
+                        const isFlashHighlighted = flashTaskKey === flashKey && !isStepCompleted && !isStepWorking;
+                        const isLocked = !canActOnProcess(proc) && (isStepWorking || isStepCompleted);
                         
                         return (
                           <div 
                             key={pIdx} 
                             className={`p-2.5 border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                              isStepCompleted 
-                                ? 'bg-green-950/10 border-green-900/35 text-green-300' 
-                                : isStepWorking 
-                                  ? 'bg-orange-950/10 border-orange-900/35 text-orange-300 animate-pulse'
-                                  : 'bg-[#080808] border-zinc-900 text-zinc-400 hover:border-zinc-800'
+                              isFlashHighlighted
+                                ? 'bg-purple-950/30 border-purple-400/60 text-white animate-[flashPulse_1s_ease-in-out_3]'
+                                : isLocked
+                                  ? 'bg-red-950/20 border-red-800/50 text-zinc-400'
+                                  : isStepCompleted 
+                                    ? 'bg-green-950/10 border-green-900/35 text-green-300' 
+                                    : isStepWorking 
+                                      ? 'bg-orange-950/10 border-orange-900/35 text-orange-300 animate-pulse'
+                                      : 'bg-[#080808] border-zinc-900 text-zinc-400 hover:border-zinc-800'
                             }`}
                           >
                             <div className="space-y-1">
@@ -518,7 +698,102 @@ export default function SimpleProjectPage({
                                     <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
                                   ))}
                                 </select>
+                                {isLocked && (
+                                  <span className="flex items-center gap-1 px-1.5 py-0.5 bg-red-950/40 border border-red-800/50 text-red-400 text-[8px] font-black uppercase tracking-wider">
+                                    <ShieldAlert size={10} />
+                                    LOCKED — YOUR ROLE CANNOT ACT ON THIS TASK
+                                  </span>
+                                )}
                               </div>
+
+                              {/* Second operator display for completed tasks */}
+                              {isStepCompleted && proc.secondOperatorId && proc.secondCompletionDate && (
+                                <div className="flex flex-wrap items-center gap-x-2 text-[9px] text-purple-400 pt-1">
+                                  <span className="uppercase font-bold text-zinc-500">Second Operator:</span>
+                                  <span className="font-bold">{allUsers.find(u => u.id === proc.secondOperatorId)?.name || 'Unknown'}</span>
+                                  <span className="text-purple-400/70">•</span>
+                                  <span>Signed off: {proc.secondCompletionDate}</span>
+                                </div>
+                              )}
+
+                              {/* Live wall-clock timer display for In Progress processes */}
+                              {isStepWorking && proc.timerStart && !proc.autoStopped && (
+                                <div className="flex items-center gap-2 mt-1.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-ping"></span>
+                                  <span className="text-[9px] text-zinc-500 uppercase font-bold">SHIFT TIMER:</span>
+                                  <span className="text-[#fb923c] font-black font-mono text-xs bg-black px-1.5 py-0.5 border border-orange-500/20">
+                                    {formatDuration(getElapsedForProcess(proc))}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handlePauseTimer(sIdx, pIdx)}
+                                    className="px-1.5 py-0.5 bg-yellow-900/30 hover:bg-yellow-800/50 text-yellow-400 border border-yellow-700/40 text-[8px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                                  >
+                                    Pause
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStopCompleteTask(sIdx, pIdx)}
+                                    className="px-1.5 py-0.5 bg-red-900/30 hover:bg-red-800/50 text-red-400 border border-red-700/40 text-[8px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                                  >
+                                    Stop / Complete
+                                  </button>
+                                </div>
+                              )}
+
+                              {/* Paused timer — show Continue button */}
+                              {isStepWorking && !proc.timerStart && (proc.accumulatedSeconds || 0) > 0 && !proc.autoStopped && (
+                                <div className="flex items-center gap-2 mt-1.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-yellow-500"></span>
+                                  <span className="text-[9px] text-zinc-500 uppercase font-bold">PAUSED:</span>
+                                  <span className="text-[#fb923c] font-black font-mono text-xs bg-black px-1.5 py-0.5 border border-orange-500/20">
+                                    {formatDuration(proc.accumulatedSeconds || 0)} tracked
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleContinueTimer(sIdx, pIdx)}
+                                    className="px-1.5 py-0.5 bg-orange-600 hover:bg-orange-500 text-black border border-orange-500 text-[8px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                                  >
+                                    Continue
+                                  </button>
+                                </div>
+                              )}
+
+                              {/* Auto-stop overtime alert with reason input */}
+                              {proc.autoStopped && proc.status === 'In Progress' && (
+                                <div className="mt-2 p-2.5 bg-red-950/20 border border-red-800/40 space-y-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <AlertTriangle size={12} className="text-red-500 shrink-0" />
+                                    <span className="text-[9px] text-red-400 font-black uppercase tracking-wider">
+                                      TIMER AUTO-STOPPED — {formatDuration(getElapsedForProcess(proc))} WORKED
+                                    </span>
+                                  </div>
+                                  {proc.overtimeReason ? (
+                                    <p className="text-[9px] text-zinc-400 font-mono">
+                                      Reason on file: <strong className="text-zinc-300">{proc.overtimeReason}</strong>
+                                    </p>
+                                  ) : (
+                                    <div className="space-y-1.5">
+                                      <span className="text-[9px] text-red-400 font-bold uppercase">Reason required:</span>
+                                      <textarea
+                                        rows={2}
+                                        placeholder="e.g., Waiting on QC approval, material delay, operator relief swap..."
+                                        value={overtimeReasons[`${sIdx}-${pIdx}`] || ''}
+                                        onChange={(e) => setOvertimeReasons(prev => ({ ...prev, [`${sIdx}-${pIdx}`]: e.target.value }))}
+                                        className="w-full bg-black border border-red-800/40 p-1.5 text-[9px] text-zinc-300 outline-none focus:border-orange-500 resize-none"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSaveOvertimeReason(sIdx, pIdx, overtimeReasons[`${sIdx}-${pIdx}`] || '')}
+                                        disabled={!overtimeReasons[`${sIdx}-${pIdx}`]?.trim()}
+                                        className="w-full py-1.5 bg-red-900/40 hover:bg-red-800/60 text-red-300 border border-red-700/40 text-[9px] font-black uppercase tracking-widest transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                                      >
+                                        Submit Reason
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
 
                             {/* Trigger signoff */}
@@ -526,24 +801,38 @@ export default function SimpleProjectPage({
                               {isStepCompleted && proc.completionDate && (
                                 <div className="text-right text-[8.5px] font-mono leading-tight shrink-0 hidden sm:block">
                                   <span className="text-green-500 block font-bold">✓ SIGNED OFF STATION</span>
-                                  <span className="text-zinc-500">
-                                    Approved: {allUsers.find(u => u.id === proc.checkedByUserId)?.name || 'Auditor'} on {proc.completionDate}
-                                  </span>
+                                  {proc.secondOperatorId ? (
+                                    <>
+                                      <div className="text-zinc-400 mt-1">
+                                        Assigned: {allUsers.find(u => u.id === proc.assignedUserId)?.name || 'Unknown'} — {proc.completionDate}
+                                      </div>
+                                      <div className="text-purple-400 font-bold">
+                                        Second Op: {allUsers.find(u => u.id === proc.secondOperatorId)?.name || 'Unknown'} — {proc.secondCompletionDate}
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <span className="text-zinc-500">
+                                      Approved: {allUsers.find(u => u.id === proc.checkedByUserId)?.name || 'Auditor'} on {proc.completionDate}
+                                    </span>
+                                  )}
                                 </div>
                               )}
 
                               <button
                                 type="button"
                                 onClick={() => handleToggleProcess(sIdx, pIdx)}
+                                disabled={isStepWorking && (proc.timerStart || (proc.accumulatedSeconds || 0) > 0)}
                                 className={`w-full sm:w-auto px-3.5 py-1.5 text-[10px] uppercase font-black font-mono tracking-widest transition-colors cursor-pointer rounded-none border ${
                                   isStepCompleted
                                     ? 'bg-green-500 text-black border-green-500 hover:bg-green-400'
-                                    : isStepWorking
-                                      ? 'bg-orange-500 text-black border-orange-500 hover:bg-orange-400'
-                                      : 'bg-black text-zinc-400 hover:text-orange-500 border-zinc-800 hover:border-orange-550'
+                                    : isStepWorking && (proc.timerStart || (proc.accumulatedSeconds || 0) > 0)
+                                      ? 'bg-orange-500/50 text-black border-orange-500/50 cursor-not-allowed'
+                                      : isStepWorking
+                                        ? 'bg-orange-500 text-black border-orange-500 hover:bg-orange-400'
+                                        : 'bg-black text-zinc-400 hover:text-orange-500 border-zinc-800 hover:border-orange-550'
                                 }`}
                               >
-                                {isStepCompleted ? 'COMPLETED' : isStepWorking ? 'IN PROGRESS' : 'MARK IN-PROGRESS'}
+                                {isStepCompleted ? 'COMPLETED' : isStepWorking && (proc.timerStart || (proc.accumulatedSeconds || 0) > 0) ? 'IN PROGRESS' : isStepWorking ? 'IN PROGRESS' : 'MARK IN-PROGRESS'}
                               </button>
                             </div>
                           </div>

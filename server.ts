@@ -132,6 +132,100 @@ async function seedDatabaseIfEmpty() {
 // Ensure database is seeded on startup (must complete before serving requests)
 await seedDatabaseIfEmpty();
 
+// Normalize process names in items and projects to match station names
+async function normalizeProcessNames() {
+  try {
+    const stations = await prisma.station.findMany({ where: { isActive: true } });
+    if (stations.length === 0) return;
+
+    const stationNames = new Set(stations.map(s => s.name));
+    
+    // Fuzzy mapping table for common legacy process names → station names
+    const nameMapping: [RegExp, string][] = [
+      [/^lathe/i, 'Lathe'],
+      [/cnc\s*lathe/i, 'Lathe'],
+      [/milling/i, 'Milling'],
+      [/cnc\s*mill/i, 'Milling'],
+      [/pressbrake|panbreak|folding/i, 'Pressbrake'],
+      [/\bbandsaw\b|\bbansaw\b/i, 'Bandsaw'],
+      [/sanding|finishing|polishing/i, 'Finishing/Polishing'],
+      [/powder\s*coating/i, 'Powder coating'],
+      [/welding|fabrication/i, 'Welding/Fabrication'],
+      [/\bassembly\b/i, 'Assembly'],
+    ];
+
+    function mapProcessName(name: string): string {
+      for (const [pattern, stationName] of nameMapping) {
+        if (pattern.test(name)) return stationName;
+      }
+      // Check if the name itself is a station name or contains one
+      for (const sn of stationNames) {
+        if (name.toLowerCase() === sn.toLowerCase()) return sn;
+        if (name.toLowerCase().includes(sn.toLowerCase())) return sn;
+      }
+      return name; // Leave unchanged if no match found
+    }
+
+    // Normalize item processes
+    const dbItems = await prisma.item.findMany();
+    let itemsUpdated = 0;
+    for (const item of dbItems) {
+      const parsedProcesses: any[] = JSON.parse(item.processes);
+      let changed = false;
+      const normalized = parsedProcesses.map((p: any) => {
+        const originalName = p.name;
+        const mappedName = mapProcessName(p.name);
+        if (mappedName !== originalName) changed = true;
+        return { ...p, name: mappedName };
+      });
+      if (changed) {
+        await prisma.item.update({
+          where: { id: item.id },
+          data: { processes: JSON.stringify(normalized) }
+        });
+        itemsUpdated++;
+        console.log(`[Migration] Item ${item.id}: normalized ${normalized.length} process names`);
+      }
+    }
+
+    // Normalize project subProject processes
+    const dbProjects = await prisma.project.findMany();
+    let projectsUpdated = 0;
+    for (const proj of dbProjects) {
+      const parsedSubs: any[] = JSON.parse(proj.subProjects);
+      let changed = false;
+      const updatedSubs = parsedSubs.map((sub: any) => {
+        if (!sub.processes || !Array.isArray(sub.processes)) return sub;
+        const normalizedProcs = sub.processes.map((p: any) => {
+          const originalName = p.name;
+          const mappedName = mapProcessName(p.name);
+          if (mappedName !== originalName) changed = true;
+          return { ...p, name: mappedName };
+        });
+        return { ...sub, processes: normalizedProcs };
+      });
+      if (changed) {
+        await prisma.project.update({
+          where: { id: proj.id },
+          data: { subProjects: JSON.stringify(updatedSubs) }
+        });
+        projectsUpdated++;
+        console.log(`[Migration] Project ${proj.id}: normalized processes`);
+      }
+    }
+
+    if (itemsUpdated > 0 || projectsUpdated > 0) {
+      console.log(`[Migration] Process name normalization complete: ${itemsUpdated} items, ${projectsUpdated} projects updated.`);
+    } else {
+      console.log('[Migration] All process names already match station names.');
+    }
+  } catch (err) {
+    console.warn('[Migration] Process name normalization skipped:', err);
+  }
+}
+
+await normalizeProcessNames();
+
 // REST API Endpoints
 app.get('/api/data', async (req, res) => {
   try {

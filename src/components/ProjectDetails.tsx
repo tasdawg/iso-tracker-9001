@@ -9,7 +9,7 @@ import { getJoinedDrawings, getItemHierarchy } from '../utils';
 import { 
   ArrowLeft, CheckSquare, Clock, FileText, UserCheck, Settings, 
   ExternalLink, Hammer, ShieldAlert, CheckCircle2, User as UserIcon, HelpCircle, Plus, Info, Upload,
-  Printer, Play, Square
+  Printer, Play, Square, AlertTriangle, X
 } from 'lucide-react';
 import NestingOptimizer from './NestingOptimizer';
 import GanttScheduler from './GanttScheduler';
@@ -25,6 +25,49 @@ interface ProjectDetailsProps {
   onBack: () => void;
   onUpdateProject: (updatedProject: Project) => void;
   onViewSimpleCard?: () => void;
+}
+
+// Small inline component for entering overtime reason
+function OvertimeReasonInput({ project, subIdx, procIdx, proc, onUpdateProject }: {
+  project: Project;
+  subIdx: number;
+  procIdx: number;
+  proc: SubProjectProcess;
+  onUpdateProject: (p: Project) => void;
+}) {
+  const [reason, setReason] = useState('');
+
+  const handleSubmit = () => {
+    if (!reason.trim()) return;
+    const nextSubProjects = [...project.subProjects];
+    const subProj = { ...nextSubProjects[subIdx] };
+    const procs = [...subProj.processes];
+    const targetProc = { ...procs[procIdx], overtimeReason: reason.trim() };
+    procs[procIdx] = targetProc;
+    subProj.processes = procs;
+    nextSubProjects[subIdx] = subProj;
+    onUpdateProject({ ...project, subProjects: nextSubProjects });
+  };
+
+  return (
+    <div className="flex gap-1.5 items-start">
+      <textarea
+        rows={2}
+        placeholder="e.g., Waiting on QC approval, material delay, operator relief swap..."
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        className="flex-1 bg-black border border-red-800/40 p-1.5 text-[9px] text-zinc-300 outline-none focus:border-orange-500 resize-none font-mono"
+      />
+      <button
+        type="button"
+        onClick={handleSubmit}
+        disabled={!reason.trim()}
+        className="shrink-0 py-1.5 bg-red-900/40 hover:bg-red-800/60 text-red-300 border border-red-700/40 text-[9px] font-black uppercase tracking-widest transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+      >
+        Save
+      </button>
+    </div>
+  );
 }
 
 export default function ProjectDetails({
@@ -52,27 +95,7 @@ export default function ProjectDetails({
 
   const activeStage = localStorage.getItem('operator_active_stage') || 'All Stages';
 
-  const getTimerStart = (pIdx: number) => {
-    const key = `mfg_timer_start_${project.id}_${selectedSubIndex}_${pIdx}`;
-    const val = localStorage.getItem(key);
-    return val ? parseInt(val, 10) : null;
-  };
-
-  const getTimerAccumulated = (pIdx: number) => {
-    const key = `mfg_timer_accumulated_${project.id}_${selectedSubIndex}_${pIdx}`;
-    const val = localStorage.getItem(key);
-    return val ? parseInt(val, 10) : 0;
-  };
-
-  const getElapsedSeconds = (pIdx: number) => {
-    const startTime = getTimerStart(pIdx);
-    const accum = getTimerAccumulated(pIdx);
-    if (startTime) {
-      return accum + Math.round((nowTime - startTime) / 1000);
-    }
-    return accum;
-  };
-
+  // Format seconds to human-readable duration
   const formatSeconds = (totalSeconds: number) => {
     const hrs = Math.floor(totalSeconds / 3600);
     const mins = Math.floor((totalSeconds % 3600) / 60);
@@ -80,78 +103,128 @@ export default function ProjectDetails({
     return `${hrs > 0 ? `${hrs}h ` : ''}${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
   };
 
-  const handleStartTimer = (pIdx: number) => {
-    const key = `mfg_timer_start_${project.id}_${selectedSubIndex}_${pIdx}`;
-    localStorage.setItem(key, Date.now().toString());
-    
-    // Update status to 'In Progress' directly
-    const updatedSubProjects = [...project.subProjects];
-    const subProj = { ...updatedSubProjects[selectedSubIndex] };
-    const procs = [...subProj.processes];
-    const proc = { ...procs[pIdx], status: 'In Progress' as const };
-    procs[pIdx] = proc;
-    subProj.processes = procs;
-    updatedSubProjects[selectedSubIndex] = subProj;
+  // Get elapsed seconds for a process (wall-clock from timerStart on the process object)
+  const getElapsedForProc = (proc: SubProjectProcess) => {
+    if (!proc.timerStart) return proc.accumulatedSeconds || 0;
+    return (proc.accumulatedSeconds || 0) + Math.floor((nowTime - proc.timerStart) / 1000);
+  };
 
-    onUpdateProject({
-      ...project,
-      subProjects: updatedSubProjects
+  // Get total elapsed seconds for a subproject (sum of all process timers)
+  const getElapsedForSubProject = (sub: SubProject) => {
+    if (!sub.processes || sub.processes.length === 0) return 0;
+    return sub.processes.reduce((total, proc) => total + getElapsedForProc(proc), 0);
+  };
+
+  // Check if any process in a subproject has an active timer
+  const isSubProjectTimerActive = (sub: SubProject) => {
+    if (!sub.processes || sub.processes.length === 0) return false;
+    return sub.processes.some(proc => proc.timerStart !== undefined && proc.status === 'In Progress');
+  };
+
+  // Overtime threshold: 9 hours wall-clock
+  const OVERTIME_THRESHOLD_MS = 9 * 3600 * 1000;
+
+  // Check for auto-stopped processes and update them
+  React.useEffect(() => {
+    let changed = false;
+    const updatedSubProjects = project.subProjects?.map((sub, sIdx) => {
+      if (sIdx !== selectedSubIndex || !sub.processes) return sub;
+      const updatedProcs = sub.processes.map((proc, pIdx) => {
+        if (proc.status === 'In Progress' && proc.timerStart && !proc.autoStopped) {
+          const elapsedMs = nowTime - proc.timerStart;
+          if (elapsedMs > OVERTIME_THRESHOLD_MS) {
+            changed = true;
+            return { ...proc, autoStopped: true };
+          }
+        }
+        return proc;
+      });
+      return { ...sub, processes: updatedProcs };
     });
-  };
-
-  const handlePauseTimer = (pIdx: number) => {
-    const startKey = `mfg_timer_start_${project.id}_${selectedSubIndex}_${pIdx}`;
-    const accumKey = `mfg_timer_accumulated_${project.id}_${selectedSubIndex}_${pIdx}`;
-    
-    const startTime = getTimerStart(pIdx);
-    if (startTime) {
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      const prevAccum = getTimerAccumulated(pIdx);
-      localStorage.setItem(accumKey, (prevAccum + elapsed).toString());
+    if (changed) {
+      onUpdateProject({ ...project, subProjects: updatedSubProjects });
     }
-    localStorage.removeItem(startKey);
-    setNowTime(Date.now());
-  };
+  }, [nowTime, project, selectedSubIndex]);
 
-  const handleCompleteWithTimer = (pIdx: number) => {
-    const startKey = `mfg_timer_start_${project.id}_${selectedSubIndex}_${pIdx}`;
-    const accumKey = `mfg_timer_accumulated_${project.id}_${selectedSubIndex}_${pIdx}`;
-    
-    const startTime = getTimerStart(pIdx);
-    const prevAccum = getTimerAccumulated(pIdx);
-    let totalSeconds = prevAccum;
-    if (startTime) {
-      totalSeconds += Math.round((Date.now() - startTime) / 1000);
-    }
-    
-    localStorage.removeItem(startKey);
-    localStorage.removeItem(accumKey);
-
-    const formattedDuration = totalSeconds > 60 
-      ? `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`
-      : `${totalSeconds}s`;
-
-    // Sign off & complete router sequence
+  const handleStartTimer = (pIdx: number) => {
     const updatedSubProjects = [...project.subProjects];
     const subProj = { ...updatedSubProjects[selectedSubIndex] };
     const procs = [...subProj.processes];
     const proc = { 
       ...procs[pIdx], 
-      status: 'Completed' as const,
-      completionDate: new Date().toISOString().split('T')[0],
-      checkedByUserId: currentUser.id,
-      notes: procs[pIdx].notes 
-        ? `${procs[pIdx].notes} (Time tracked: ${formattedDuration})`
-        : `Time tracked: ${formattedDuration}. [Shift login check]`
+      status: 'In Progress' as const,
+      timerStart: Date.now(),
+      autoStopped: false,
+      overtimeReason: undefined
     };
     procs[pIdx] = proc;
     subProj.processes = procs;
     updatedSubProjects[selectedSubIndex] = subProj;
 
-    onUpdateProject({
-      ...project,
-      subProjects: updatedSubProjects
-    });
+    onUpdateProject({ ...project, subProjects: updatedSubProjects });
+  };
+
+  const handlePauseTimer = (pIdx: number) => {
+    const updatedSubProjects = [...project.subProjects];
+    const subProj = { ...updatedSubProjects[selectedSubIndex] };
+    const procs = [...subProj.processes];
+    const proc = { ...procs[pIdx] };
+    if (proc.timerStart) {
+      const elapsed = Math.floor((Date.now() - proc.timerStart) / 1000);
+      proc.accumulatedSeconds = (proc.accumulatedSeconds || 0) + elapsed;
+      proc.timerStart = undefined;
+    }
+    procs[pIdx] = proc;
+    subProj.processes = procs;
+    updatedSubProjects[selectedSubIndex] = subProj;
+
+    onUpdateProject({ ...project, subProjects: updatedSubProjects });
+    setNowTime(Date.now());
+  };
+
+  const handleCompleteWithTimer = (pIdx: number) => {
+    const updatedSubProjects = [...project.subProjects];
+    const subProj = { ...updatedSubProjects[selectedSubIndex] };
+    const procs = [...subProj.processes];
+    const oldProc = procs[pIdx];
+    
+    let totalSeconds = oldProc.accumulatedSeconds || 0;
+    if (oldProc.timerStart) {
+      totalSeconds += Math.floor((Date.now() - oldProc.timerStart) / 1000);
+    }
+
+    const formattedDuration = formatSeconds(totalSeconds);
+
+    // Build notes with time tracking and overtime info
+    let timeNote = ` [Wall-clock duration: ${formattedDuration}]`;
+    if (oldProc.autoStopped && oldProc.overtimeReason) {
+      timeNote += ` | Auto-stopped at 9h. Reason: ${oldProc.overtimeReason}`;
+    }
+
+    const proc = { 
+      ...oldProc,
+      status: 'Completed' as const,
+      completionDate: new Date().toISOString().split('T')[0],
+      checkedByUserId: currentUser.id,
+      notes: oldProc.notes 
+        ? `${oldProc.notes}${timeNote}` 
+        : `Time tracked: ${formattedDuration}. [Shift login check]`,
+      timerStart: undefined,
+      accumulatedSeconds: 0,
+    };
+    
+    // Track second operator if admin/manager completing on behalf of assigned user
+    if ((currentUser.role === 'Admin' || currentUser.role === 'Production Manager') 
+        && oldProc.assignedUserId !== currentUser.id) {
+      proc.secondOperatorId = currentUser.id;
+      proc.secondCompletionDate = new Date().toISOString().split('T')[0];
+    }
+    
+    procs[pIdx] = proc;
+    subProj.processes = procs;
+    updatedSubProjects[selectedSubIndex] = subProj;
+
+    onUpdateProject({ ...project, subProjects: updatedSubProjects });
   };
   
   // States for updating processes
@@ -160,6 +233,7 @@ export default function ProjectDetails({
   const [processStatusInput, setProcessStatusInput] = useState<SubProjectProcess['status']>('Pending');
   const [processAssigneeInput, setProcessAssigneeInput] = useState<string>('');
   const [processNotesInput, setProcessNotesInput] = useState<string>('');
+  const [secondOperatorId, setSecondOperatorId] = useState<string>('');
 
   // States for adding/editing outsourced details
   const [editingOutsourceIndex, setEditingOutsourceIndex] = useState<number | null>(null);
@@ -216,9 +290,21 @@ export default function ProjectDetails({
     if (processStatusInput === 'Completed' && oldStatus !== 'Completed') {
       proc.completionDate = new Date().toISOString().split('T')[0];
       proc.checkedByUserId = currentUser.id; // current user acts as QA Signoff
+      // Track second operator if admin/manager assigning someone else to complete
+      if ((currentUser.role === 'Admin' || currentUser.role === 'Production Manager') 
+          && processAssigneeInput !== currentUser.id 
+          && secondOperatorId) {
+        proc.secondOperatorId = secondOperatorId;
+        proc.secondCompletionDate = new Date().toISOString().split('T')[0];
+      } else if (!secondOperatorId) {
+        proc.secondOperatorId = undefined;
+        proc.secondCompletionDate = undefined;
+      }
     } else if (processStatusInput !== 'Completed') {
       proc.completionDate = undefined;
       proc.checkedByUserId = undefined;
+      proc.secondOperatorId = undefined;
+      proc.secondCompletionDate = undefined;
     }
 
     procs[procIdx] = proc;
@@ -242,6 +328,7 @@ export default function ProjectDetails({
     setProcessStatusInput(proc.status);
     setProcessAssigneeInput(proc.assignedUserId);
     setProcessNotesInput(proc.notes || '');
+    setSecondOperatorId(proc.secondOperatorId || '');
   };
 
   // Start outsourced editing
@@ -513,6 +600,125 @@ export default function ProjectDetails({
                             <span className="text-brand-orange-500 bg-brand-orange-500/5 px-2 py-0.5">IN-HOUSE MANUFACTURED</span>
                           )}
                         </div>
+
+                        {/* Subproject timer display & action buttons */}
+                        {sub.processes && sub.processes.length > 0 && (
+                          <div className="mt-3 pt-3 border-t border-white/5 space-y-2">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-gray-400 uppercase tracking-wider font-bold">Total Work Time:</span>
+                              {(() => {
+                                const elapsed = getElapsedForSubProject(sub);
+                                const isActive = isSubProjectTimerActive(sub);
+                                return (
+                                  <>
+                                    {isActive ? (
+                                      <div className="flex items-center gap-2 bg-[#d97706]/10 border border-amber-500/20 px-2 py-1">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-brand-orange-500 animate-ping"></span>
+                                        <span className="text-[#fb923c] font-black font-mono tracking-widest">{formatSeconds(elapsed)}</span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-white font-bold font-mono">{formatSeconds(elapsed)}</span>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                            </div>
+
+                            {(() => {
+                              const isActive = isSubProjectTimerActive(sub);
+                              const anyCompleted = sub.processes.every(p => p.status === 'Completed');
+                              return (
+                                <div className="flex gap-2">
+                                  {!isActive ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        // Start first pending process timer
+                                        const updatedSubProjects = [...project.subProjects];
+                                        const subProj = { ...updatedSubProjects[sIdx] };
+                                        const procs = [...subProj.processes];
+                                        const firstPending = procs.findIndex(p => p.status === 'Pending' || (p.status === 'In Progress' && !p.timerStart));
+                                        if (firstPending >= 0) {
+                                          procs[firstPending] = { 
+                                            ...procs[firstPending], 
+                                            status: 'In Progress',
+                                            timerStart: Date.now(),
+                                            autoStopped: false,
+                                            overtimeReason: undefined
+                                          };
+                                          subProj.processes = procs;
+                                          updatedSubProjects[sIdx] = subProj;
+                                          onUpdateProject({ ...project, subProjects: updatedSubProjects });
+                                        }
+                                      }}
+                                      className="bg-brand-orange-500 text-black hover:bg-brand-orange-400 text-[10px] font-black uppercase tracking-widest py-2 px-3 transition-all flex items-center justify-center gap-1.5 rounded-none cursor-pointer"
+                                    >
+                                      <Play size={12} className="fill-current" />
+                                      Start Work
+                                    </button>
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          // Pause all active process timers
+                                          const updatedSubProjects = [...project.subProjects];
+                                          const subProj = { ...updatedSubProjects[sIdx] };
+                                          const procs = [...subProj.processes];
+                                          let changed = false;
+                                          procs.forEach((proc, pIdx) => {
+                                            if (proc.timerStart && proc.status === 'In Progress') {
+                                              const elapsed = Math.floor((Date.now() - proc.timerStart) / 1000);
+                                              procs[pIdx] = { 
+                                                ...proc, 
+                                                accumulatedSeconds: (proc.accumulatedSeconds || 0) + elapsed,
+                                                timerStart: undefined
+                                              };
+                                              changed = true;
+                                            }
+                                          });
+                                          if (changed) {
+                                            subProj.processes = procs;
+                                            updatedSubProjects[sIdx] = subProj;
+                                            onUpdateProject({ ...project, subProjects: updatedSubProjects });
+                                            setNowTime(Date.now());
+                                          }
+                                        }}
+                                        className="bg-[#222] border border-white/10 text-white hover:bg-white/5 text-[10px] font-bold uppercase tracking-widest py-2 px-3 transition-all flex items-center justify-center gap-1.5 rounded-none cursor-pointer"
+                                      >
+                                        <Square size={12} className="fill-current text-white" />
+                                        Pause All
+                                      </button>
+                                      {anyCompleted ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            // Mark subproject as completed
+                                            const updatedSubProjects = [...project.subProjects];
+                                            updatedSubProjects[sIdx] = { 
+                                              ...sub, 
+                                              outsourcedStatus: 'QA Passed',
+                                              isOutsourced: false
+                                            };
+                                            onUpdateProject({ ...project, subProjects: updatedSubProjects });
+                                          }}
+                                          className="bg-green-500 hover:bg-green-400 text-black text-[10px] font-black uppercase tracking-widest py-2 px-3 transition-all flex items-center justify-center gap-1.5 rounded-none cursor-pointer"
+                                        >
+                                          <CheckSquare size={12} />
+                                          Complete Batch
+                                        </button>
+                                      ) : (
+                                        <span className="text-[10px] text-gray-500 uppercase tracking-widest py-2 px-3 border border-white/5">
+                                          All processes must be completed first
+                                        </span>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -755,9 +961,8 @@ export default function ProjectDetails({
                   const renderProcessCard = (proc: SubProjectProcess, pIdx: number, isAssigned: boolean) => {
                     const assignedUser = allUsers.find(u => u.id === proc.assignedUserId);
                     const checkerUser = allUsers.find(u => u.id === proc.checkedByUserId);
-                    const startTime = getTimerStart(pIdx);
-                    const isTimerActive = startTime !== null;
-                    const elapsed = getElapsedSeconds(pIdx);
+                    const isTimerActive = proc.timerStart !== undefined;
+                    const elapsed = getElapsedForProc(proc);
 
                     return (
                       <div key={pIdx} className={`bg-black p-6 border transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-4 ${
@@ -797,23 +1002,62 @@ export default function ProjectDetails({
                               </div>
                             )}
 
-                            {/* Clock timer display for assigned workflows */}
-                            {isAssigned && (
-                              <div className="mt-2">
-                                {isTimerActive ? (
+                            {/* Second operator display for completed tasks */}
+                            {proc.status === 'Completed' && proc.secondOperatorId && (
+                              <div className="mt-2 flex items-center gap-2 text-xs bg-purple-950/20 border border-purple-800/40 p-2">
+                                <span className="text-purple-400 font-bold uppercase text-[10px]">Second Operator:</span>
+                                <span className="text-white font-bold">{allUsers.find(u => u.id === proc.secondOperatorId)?.name || 'Unknown'}</span>
+                                <span className="text-purple-400/70">•</span>
+                                <span className="text-purple-300 text-[10px]">Signed off: {proc.secondCompletionDate}</span>
+                              </div>
+                            )}
+
+                            {/* Clock timer display for all workflows */}
+                            {proc.status === 'In Progress' || proc.status === 'Completed' ? (
+                              <div className="mt-2 space-y-2">
+                                {proc.autoStopped ? (
+                                  <div className="p-2.5 bg-red-950/20 border border-red-800/40 space-y-1.5">
+                                    <div className="flex items-center gap-1.5">
+                                      <AlertTriangle size={12} className="text-red-500 shrink-0" />
+                                      <span className="text-[9px] text-red-400 font-black uppercase tracking-wider">
+                                        TIMER AUTO-STOPPED — {formatSeconds(elapsed)} WORKED
+                                      </span>
+                                    </div>
+                                    {proc.overtimeReason ? (
+                                      <p className="text-[9px] text-zinc-400 font-mono">
+                                        Reason on file: <strong className="text-zinc-300">{proc.overtimeReason}</strong>
+                                      </p>
+                                    ) : (
+                                      isAssigned && (
+                                        <div className="space-y-1.5">
+                                          <span className="text-[9px] text-red-400 font-bold uppercase">Reason required:</span>
+                                          <OvertimeReasonInput 
+                                            project={project} 
+                                            subIdx={selectedSubIndex} 
+                                            procIdx={pIdx} 
+                                            proc={proc} 
+                                            onUpdateProject={onUpdateProject} 
+                                          />
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
+                                ) : isTimerActive ? (
                                   <div className="flex items-center gap-2 bg-[#d97706]/10 border border-amber-500/20 p-2 text-xs font-mono">
                                     <span className="w-1.5 h-1.5 rounded-full bg-brand-orange-500 animate-ping"></span>
                                     <span className="text-[#fb923c] font-black">LOGGED WORKSTATION SHIFT RUNNING:</span>
                                     <span className="text-white font-black font-mono tracking-widest bg-black px-2 py-0.5 border border-white/10">{formatSeconds(elapsed)}</span>
                                   </div>
                                 ) : (
-                                  proc.status === 'In Progress' && getTimerAccumulated(pIdx) > 0 && (
+                                  proc.status === 'In Progress' && proc.accumulatedSeconds && proc.accumulatedSeconds > 0 && (
                                     <div className="text-xs font-mono text-gray-400 bg-white/5 p-1 border border-white/5 inline-block">
-                                      Accumulated pause: <strong className="text-white font-mono">{formatSeconds(getTimerAccumulated(pIdx))}</strong>
+                                      Accumulated pause: <strong className="text-white font-mono">{formatSeconds(proc.accumulatedSeconds)}</strong>
                                     </div>
                                   )
                                 )}
                               </div>
+                            ) : proc.status === 'Pending' && (
+                              <div className="mt-2 text-[10px] text-gray-500 uppercase tracking-widest">Not Started</div>
                             )}
                           </div>
                         </div>
@@ -832,9 +1076,14 @@ export default function ProjectDetails({
                               </span>
                             </div>
                             {proc.status === 'Completed' && (
-                              <div className="text-[10px] text-green-400">
-                                Approved on {proc.completionDate} <br />
-                                By Inspector: <strong className="text-white underline">{checkerUser ? checkerUser.name : 'TBD'}</strong>
+                              <div className="text-[10px] text-green-400 space-y-1">
+                                <div>Approved on {proc.completionDate}</div>
+                                <div>By Inspector: <strong className="text-white underline">{checkerUser ? checkerUser.name : 'TBD'}</strong></div>
+                                {proc.secondOperatorId && (
+                                  <div className="text-purple-400 font-bold pt-1 border-t border-purple-800/30">
+                                    Second Operator: <strong className="text-white">{allUsers.find(u => u.id === proc.secondOperatorId)?.name || 'Unknown'}</strong> — {proc.secondCompletionDate}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -961,6 +1210,23 @@ export default function ProjectDetails({
                             <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
                           ))}
                         </select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-400 font-sans">Second Operator (Admin/Manager Override)</label>
+                        <select
+                          value={secondOperatorId}
+                          onChange={e => setSecondOperatorId(e.target.value)}
+                          className="w-full bg-black border border-white/10 p-3 text-white focus:border-purple-500 outline-none text-xs"
+                        >
+                          <option value="">-- None --</option>
+                          {allUsers.filter(u => u.role === 'Admin' || u.role === 'Production Manager').map(u => (
+                            <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                          ))}
+                        </select>
+                        <span className="text-[9px] text-gray-500 block">
+                          Select an Admin or Production Manager to act as second operator signing off this task. Only appears when task is marked Completed and assigned user differs from current admin/manager.
+                        </span>
                       </div>
 
                       <div className="space-y-2">

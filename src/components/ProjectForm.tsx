@@ -30,10 +30,11 @@ export default function ProjectForm({
   const [title, setTitle] = useState('');
   const [clientId, setClientId] = useState('');
   const [jobCode, setJobCode] = useState('');
-  const [selectedItemId, setSelectedItemId] = useState('');
-  const [itemQty, setItemQty] = useState<number>(1);
   const [deadline, setDeadline] = useState('');
   const [customBatch, setCustomBatch] = useState(() => generateBatchCode('ISO-B'));
+
+  // Multiple item selection state
+  const [selectedItems, setSelectedItems] = useState<{ itemId: string; qty: number }[]>([]);
 
   // Materials allocation sub-state
   const [allocatedMaterials, setAllocatedMaterials] = useState<{
@@ -41,9 +42,28 @@ export default function ProjectForm({
     qtyToAllocate: number;
   }[]>([]);
 
-  // Helpers
-  const selectedItem = allItems.find(i => i.id === selectedItemId);
+  // Helpers for multiple item selection
+  const handleAddItemRow = () => {
+    setSelectedItems([...selectedItems, { itemId: '', qty: 1 }]);
+  };
 
+  const handleRemoveItemRow = (idx: number) => {
+    setSelectedItems(selectedItems.filter((_, i) => i !== idx));
+  };
+
+  const handleItemChange = (idx: number, itemId: string) => {
+    const updated = [...selectedItems];
+    updated[idx].itemId = itemId;
+    setSelectedItems(updated);
+  };
+
+  const handleItemQtyChange = (idx: number, qty: number) => {
+    const updated = [...selectedItems];
+    updated[idx].qty = Math.max(1, qty);
+    setSelectedItems(updated);
+  };
+
+  // Helpers for materials allocation
   const handleAddMaterialRow = () => {
     // defaults to first available material
     if (allMaterials.length > 0) {
@@ -72,55 +92,64 @@ export default function ProjectForm({
 
   const handleFormSubmission = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title || !clientId || !selectedItemId || !deadline) {
-      alert("Please complete all required fields (Job Title, Client, Primary Item, and Deadline).");
+    if (!title || !clientId || selectedItems.length === 0 || !deadline) {
+      alert("Please complete all required fields (Job Title, Client, at least one Item, and Deadline).");
       return;
     }
 
-    if (!selectedItem) return;
+    // Validate all selected items exist
+    const validItems = selectedItems.filter(s => s.itemId && allItems.find(i => i.id === s.itemId));
+    if (validItems.length === 0) {
+      alert("Please select at least one valid item template.");
+      return;
+    }
 
-    // 1. Compile Subprojects hierarchy from selectedItem
-    // Each subproject will have its own processes initialized from the Item template processes
+    // 1. Compile Subprojects hierarchy from all selected items
     const subProjects: SubProject[] = [];
 
-    // Add primary item itself as a subproject manufacture job
-    const primaryProcesses: SubProjectProcess[] = (selectedItem.processes || []).map(p => ({
-      name: p.name,
-      sequence: p.sequence,
-      assignedUserId: '', // Unassigned initially
-      status: 'Pending'
-    }));
+    validItems.forEach(({ itemId, qty }) => {
+      const selectedItemTemplate = allItems.find(i => i.id === itemId);
+      if (!selectedItemTemplate) return;
 
-    subProjects.push({
-      itemId: selectedItem.id,
-      qty: itemQty,
-      batchNo: generateBatchCode('SUB-B'),
-      processes: primaryProcesses,
-      isOutsourced: false
-    });
+      // Add primary item itself as a subproject manufacture job
+      const primaryProcesses: SubProjectProcess[] = (selectedItemTemplate.processes || []).map(p => ({
+        name: p.name,
+        sequence: p.sequence,
+        assignedUserId: '', // Unassigned initially
+        status: 'Pending'
+      }));
 
-    // If the template item has nested constituent items, automatically import them!
-    if (selectedItem.subItems && selectedItem.subItems.length > 0) {
-      selectedItem.subItems.forEach(sub => {
-        const subItemTemplate = allItems.find(i => i.id === sub.childItemId);
-        if (subItemTemplate) {
-          const subItemProcesses: SubProjectProcess[] = (subItemTemplate.processes || []).map(p => ({
-            name: p.name,
-            sequence: p.sequence,
-            assignedUserId: '',
-            status: 'Pending'
-          }));
-
-          subProjects.push({
-            itemId: sub.childItemId,
-            qty: sub.qty * itemQty, // nested item multiplier
-            batchNo: generateBatchCode('SUB-B'),
-            processes: subItemProcesses,
-            isOutsourced: false
-          });
-        }
+      subProjects.push({
+        itemId: selectedItemTemplate.id,
+        qty: qty,
+        batchNo: generateBatchCode('SUB-B'),
+        processes: primaryProcesses,
+        isOutsourced: false
       });
-    }
+
+      // If the template item has nested constituent items, automatically import them!
+      if (selectedItemTemplate.subItems && selectedItemTemplate.subItems.length > 0) {
+        selectedItemTemplate.subItems.forEach(sub => {
+          const subItemTemplate = allItems.find(i => i.id === sub.childItemId);
+          if (subItemTemplate) {
+            const subItemProcesses: SubProjectProcess[] = (subItemTemplate.processes || []).map(p => ({
+              name: p.name,
+              sequence: p.sequence,
+              assignedUserId: '',
+              status: 'Pending'
+            }));
+
+            subProjects.push({
+              itemId: sub.childItemId,
+              qty: sub.qty * qty, // nested item multiplier
+              batchNo: generateBatchCode('SUB-B'),
+              processes: subItemProcesses,
+              isOutsourced: false
+            });
+          }
+        });
+      }
+    });
 
     // 2. Prep Allocated Stocks and modify active physical materials quantities
     const updatedMaterials = [...allMaterials];
@@ -298,56 +327,88 @@ export default function ProjectForm({
           </div>
         </div>
 
-        {/* Item Selection & Quantity */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-black/40 p-6 border border-white/5">
-          <div className="md:col-span-2 space-y-2">
-            <label className="block text-xs uppercase tracking-widest font-bold text-gray-300">
-              Primary Mechanical Item <span className="text-brand-orange-500">*</span>
-            </label>
-            <select
-              required
-              value={selectedItemId}
-              onChange={e => setSelectedItemId(e.target.value)}
-              className="w-full bg-black border border-white/10 p-4 text-white focus:border-brand-orange-500 outline-none rounded-none text-sm"
+        {/* Multiple Item Selection & Quantities */}
+        <div className="bg-black/40 p-5 border border-white/5 space-y-3">
+          <div className="flex justify-between items-center pb-2 border-b border-white/10">
+            <div>
+              <label className="block text-xs uppercase tracking-widest font-bold text-gray-300">
+                Select Items for This Project <span className="text-brand-orange-500">*</span>
+              </label>
+              <p className="text-[10px] text-gray-400 mt-0.5">Add one or more item templates with quantities. Nested sub-items auto-import.</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleAddItemRow}
+              className="bg-black border border-brand-orange-500 text-brand-orange-500 hover:bg-brand-orange-500 hover:text-black py-1.5 px-3 text-[10px] font-bold uppercase tracking-widest transition-all flex items-center gap-1"
             >
-              <option value="">Choose item pattern...</option>
-              {allItems.map(i => (
-                <option key={i.id} value={i.id}>{i.name} ({i.itemCode})</option>
-              ))}
-            </select>
-            <p className="text-[11px] text-gray-400">
-              Selecting this automatically imports its fabrication operations, drawings, nested sub-items, and cut configurations.
-            </p>
+              <Plus size={12} /> Add Item
+            </button>
           </div>
 
-          <div className="space-y-2">
-            <label className="block text-xs uppercase tracking-widest font-bold text-gray-300">
-              Target Quantity
-            </label>
-            <input
-              type="number"
-              min="1"
-              required
-              value={itemQty}
-              onChange={e => setItemQty(parseInt(e.target.value) || 1)}
-              className="w-full bg-black border border-white/10 p-4 text-white focus:border-brand-orange-500 outline-none rounded-none text-sm font-mono"
-            />
-          </div>
+          {selectedItems.length === 0 ? (
+            <div className="text-center py-4 border border-dashed border-white/10 bg-black/20 text-gray-500 text-xs">
+              No items selected. Click "Add Item" to begin.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {selectedItems.map((row, rIdx) => {
+                const currentItem = allItems.find(i => i.id === row.itemId);
+                return (
+                  <div key={rIdx} className="grid grid-cols-[1fr_auto_auto] gap-2 items-center bg-black p-3 border border-white/5">
+                    <select
+                      value={row.itemId}
+                      onChange={e => handleItemChange(rIdx, e.target.value)}
+                      className="w-full bg-black border border-white/5 p-2 text-xs text-white outline-none focus:border-brand-orange-500"
+                    >
+                      <option value="">Select item...</option>
+                      {allItems.map(i => (
+                        <option key={i.id} value={i.id}>{i.name} ({i.itemCode})</option>
+                      ))}
+                    </select>
 
-          {selectedItem && (
-            <div className="col-span-1 md:col-span-3 text-xs text-gray-300 space-y-2 border-t border-white/5 pt-4">
-              <div className="font-bold text-brand-orange-400 uppercase tracking-widest">Import Preview:</div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <span className="text-gray-500 font-bold">Route sheets:</span> {selectedItem.processes.length} sequences
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min="1"
+                        value={row.qty}
+                        onChange={e => handleItemQtyChange(rIdx, parseInt(e.target.value) || 1)}
+                        className="w-20 bg-black border border-white/5 p-2 text-xs text-right font-mono text-white outline-none focus:border-brand-orange-500"
+                      />
+                      <span className="text-[10px] text-gray-400">pcs</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveItemRow(rIdx)}
+                      disabled={selectedItems.length === 1}
+                      className="p-1.5 text-red-400 hover:text-red-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                      title="Remove item"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                );
+              })}
+
+              {/* Import preview for all selected items */}
+              {selectedItems.filter(s => s.itemId).length > 0 && (
+                <div className="pt-3 border-t border-white/5 text-[10px] text-gray-400 space-y-1">
+                  <div className="font-bold text-brand-orange-400 uppercase tracking-widest pb-1">Auto-import Summary:</div>
+                  {selectedItems.filter(s => s.itemId).map((row, idx) => {
+                    const item = allItems.find(i => i.id === row.itemId);
+                    if (!item) return null;
+                    return (
+                      <div key={idx} className="flex justify-between items-center">
+                        <span>{item.name} ({item.itemCode}) × {row.qty}</span>
+                        <span className="text-gray-500">
+                          {item.processes.length} steps
+                          {item.subItems?.length > 0 && ` + ${item.subItems.length} nested`}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div>
-                  <span className="text-gray-500 font-bold">Constituent nested parts:</span> {selectedItem.subItems.length > 0 ? `${selectedItem.subItems.length} nested part types` : 'None'}
-                </div>
-                <div>
-                  <span className="text-gray-500 font-bold">Part diagrams:</span> {selectedItem.drawings.length} drawing CAD sheets
-                </div>
-              </div>
+              )}
             </div>
           )}
         </div>

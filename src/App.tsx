@@ -113,6 +113,15 @@ export default function App() {
   // Quick state overrides
   const [isSyncing, setIsSyncing] = useState(false);
 
+  // Live clock for real-time timer updates in expanded rows
+  const [nowTime, setNowTime] = useState(Date.now());
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setNowTime(Date.now());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Force normal workers to see only the Projects tab
   useEffect(() => {
     if (operator?.role === 'Worker' && currentTab !== 'projects') {
@@ -457,6 +466,30 @@ export default function App() {
             localStorage.removeItem('operator_project_id');
           }
         }}
+        onNavigateToProject={(user, stage, projectId, subIdx, procIdx) => {
+          setOperator(user);
+          setActiveStage(stage);
+          setIsInducted(true);
+          setHasCompletedInitialLogin(true);
+          localStorage.setItem('operator_inducted', 'true');
+          localStorage.setItem('operator_active_stage', stage);
+          localStorage.setItem('operator_id', user.id);
+          setActiveProjectId(projectId);
+          localStorage.setItem('operator_project_id', projectId);
+          localStorage.setItem('flash_task_idx', `${subIdx}-${procIdx}`);
+        }}
+        onManagerMode={(managerUser) => {
+          setOperator(managerUser);
+          setActiveStage('All Stages');
+          setIsInducted(true);
+          setHasCompletedInitialLogin(true);
+          setActiveProjectId(null);
+          localStorage.setItem('operator_inducted', 'true');
+          localStorage.setItem('operator_active_stage', 'All Stages');
+          localStorage.setItem('operator_id', managerUser.id);
+          localStorage.removeItem('operator_project_id');
+        }}
+        onUpdateProject={handleUpdateProjectSchema}
         projects={projects}
         items={items}
         materials={materials}
@@ -466,8 +499,8 @@ export default function App() {
     );
   }
 
-  // After induction: Workers with an active project go straight to the run card view
-  if (operator.role === 'Worker' && activeProjectId) {
+  // After induction: any role with an active project goes straight to the traveler run card view
+  if (activeProjectId) {
     const activeProj = projects.find(p => p.id === activeProjectId && p.notVisible !== 1);
     
     if (activeProj) {
@@ -484,10 +517,9 @@ export default function App() {
               onExitProject={() => {
                 setActiveProjectId(null);
                 localStorage.removeItem('operator_project_id');
-                if (operator.role === 'Worker') {
-                  setIsInducted(false);
-                  localStorage.removeItem('operator_inducted');
-                }
+                setIsInducted(false);
+                setHasCompletedInitialLogin(false);
+                localStorage.removeItem('operator_inducted');
               }}
             />
           </div>
@@ -1105,18 +1137,30 @@ export default function App() {
                                                 {subItemTemplate ? subItemTemplate.name : 'Sub Assembly Unit'}
                                               </p>
 
-                                              {/* Sub-Processes router list */}
+                                              {/* Sub-Processes router list with real-time timers */}
                                               <div className="space-y-1.5 text-[10px] font-mono pt-1 text-zinc-400">
                                                 {(sub?.processes || []).map((proc, pIdx) => {
                                                   const isStepDone = proc.status === 'Completed';
+                                                  const isTimerActive = proc.timerStart !== undefined;
+                                                  
+                                                  // Calculate live elapsed time using nowTime state
+                                                  let currentElapsed = proc.accumulatedSeconds || 0;
+                                                  if (isTimerActive && proc.timerStart) {
+                                                    currentElapsed += Math.floor((nowTime - proc.timerStart) / 1000);
+                                                  }
+                                                  const hrs = Math.floor(currentElapsed / 3600);
+                                                  const mins = Math.floor((currentElapsed % 3600) / 60);
+                                                  const secs = currentElapsed % 60;
+                                                  const formattedTime = `${hrs > 0 ? `${hrs}h ` : ''}${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
+
                                                   return (
-                                                    <div key={pIdx} className="flex justify-between items-center p-1 hover:bg-zinc-950 transition-colors">
-                                                      <span className="leading-none text-zinc-400 flex items-center gap-1.5 font-sans font-bold uppercase">
-                                                        <span className="text-zinc-600">#{proc.sequence}</span>
-                                                        <span>{proc.name}</span>
+                                                    <div key={pIdx} className="flex justify-between items-center p-1.5 hover:bg-zinc-950 transition-colors border-b border-zinc-900/30">
+                                                      <span className="leading-none text-zinc-400 flex items-center gap-2 font-sans font-bold uppercase min-w-[120px]">
+                                                        <span className="text-zinc-600 w-5 text-right">#{proc.sequence}</span>
+                                                        <span className="flex-1">{proc.name}</span>
                                                       </span>
 
-                                                      <div className="flex items-center gap-2">
+                                                      <div className="flex items-center gap-2 min-w-[240px] justify-end">
                                                         <select
                                                           className="bg-black border border-zinc-800 text-zinc-500 p-0.5 text-[9px] uppercase cursor-pointer"
                                                           value={proc.assignedUserId || ''}
@@ -1138,34 +1182,148 @@ export default function App() {
                                                           ))}
                                                         </select>
 
-                                                        <button
-                                                          onClick={() => {
-                                                            const updatedSubprojects = [...proj.subProjects];
-                                                            const updProcesses = [...updatedSubprojects[sIdx].processes];
-                                                            const nextStatus = isStepDone ? 'Pending' : 'Completed';
-                                                            
-                                                            updProcesses[pIdx] = { 
-                                                              ...updProcesses[pIdx], 
-                                                              status: nextStatus as any,
-                                                              completionDate: nextStatus === 'Completed' ? new Date().toISOString().split('T')[0] : undefined,
-                                                              checkedByUserId: nextStatus === 'Completed' ? operator.id : undefined
-                                                            };
-                                                            updatedSubprojects[sIdx].processes = updProcesses;
+                                                        {/* Timer display for In Progress processes - wider */}
+                                                        {proc.status === 'In Progress' && (
+                                                          <>
+                                                            {isTimerActive ? (
+                                                              <span className="text-[#fb923c] font-black text-[10px] bg-[#d97706]/10 border border-amber-500/20 px-2 py-1 flex items-center gap-1.5 min-w-[100px] justify-center">
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-ping"></span>
+                                                                {formattedTime}
+                                                              </span>
+                                                            ) : (
+                                                              <span className="text-zinc-300 text-[10px] font-mono px-2 py-1 min-w-[80px] text-center bg-zinc-900 border border-zinc-800">
+                                                                {formattedTime}
+                                                              </span>
+                                                            )}
 
-                                                            // Auto sync of project state
-                                                            handleUpdateProjectSchema({
-                                                              ...proj,
-                                                              subProjects: updatedSubprojects
-                                                            });
-                                                          }}
-                                                          className={`px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${
-                                                            isStepDone
-                                                              ? 'bg-green-500/10 text-green-400 border border-green-900/30 font-bold'
-                                                              : 'bg-zinc-900 text-zinc-500 hover:border-orange-500 hover:text-orange-400 border border-zinc-800 text-[9px]'
-                                                          }`}
-                                                        >
-                                                          {isStepDone ? '✓ Sign-off' : 'Pending'}
-                                                        </button>
+                                                            {!isStepDone && (
+                                                              isTimerActive ? (
+                                                                <button
+                                                                  onClick={() => {
+                                                                    const updatedSubprojects = [...proj.subProjects];
+                                                                    const updProcesses = [...updatedSubprojects[sIdx].processes];
+                                                                    const procData = { ...updProcesses[pIdx] };
+                                                                    if (procData.timerStart) {
+                                                                      const elapsed = Math.floor((Date.now() - procData.timerStart) / 1000);
+                                                                      procData.accumulatedSeconds = (procData.accumulatedSeconds || 0) + elapsed;
+                                                                      procData.timerStart = undefined;
+                                                                    }
+                                                                    updProcesses[pIdx] = procData;
+                                                                    updatedSubprojects[sIdx].processes = updProcesses;
+
+                                                                    handleUpdateProjectSchema({
+                                                                      ...proj,
+                                                                      subProjects: updatedSubprojects
+                                                                    });
+                                                                  }}
+                                                                  className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-zinc-800 text-white hover:bg-zinc-700 border border-zinc-700 min-w-[60px]"
+                                                                >
+                                                                  Pause
+                                                                </button>
+                                                              ) : (
+                                                                <button
+                                                                  onClick={() => {
+                                                                    const updatedSubprojects = [...proj.subProjects];
+                                                                    const updProcesses = [...updatedSubprojects[sIdx].processes];
+                                                                    updProcesses[pIdx] = { 
+                                                                      ...updProcesses[pIdx], 
+                                                                      status: 'In Progress' as any,
+                                                                      timerStart: Date.now(),
+                                                                      autoStopped: false,
+                                                                      overtimeReason: undefined
+                                                                    };
+                                                                    updatedSubprojects[sIdx].processes = updProcesses;
+
+                                                                    handleUpdateProjectSchema({
+                                                                      ...proj,
+                                                                      subProjects: updatedSubprojects
+                                                                    });
+                                                                  }}
+                                                                  className="px-2 py-1 text-[9px] font-black uppercase tracking-wider bg-orange-500 text-black hover:bg-orange-400 border border-orange-500 min-w-[60px]"
+                                                                >
+                                                                  Start
+                                                                </button>
+                                                              )
+                                                            )}
+
+                                                            <button
+                                                              onClick={() => {
+                                                                const updatedSubprojects = [...proj.subProjects];
+                                                                const updProcesses = [...updatedSubprojects[sIdx].processes];
+                                                                const procData = { ...updProcesses[pIdx] };
+                                                                
+                                                                let totalSeconds = procData.accumulatedSeconds || 0;
+                                                                if (procData.timerStart) {
+                                                                  totalSeconds += Math.floor((Date.now() - procData.timerStart) / 1000);
+                                                                }
+
+                                                                const formattedDuration = `${hrs > 0 ? `${Math.floor(totalSeconds / 3600)}h ` : ''}${Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0')}m ${(totalSeconds % 60).toString().padStart(2, '0')}s`;
+
+                                                                updProcesses[pIdx] = { 
+                                                                  ...procData, 
+                                                                  status: 'Completed' as any,
+                                                                  completionDate: new Date().toISOString().split('T')[0],
+                                                                  checkedByUserId: operator.id,
+                                                                  notes: procData.notes ? `${procData.notes} [Wall-clock duration: ${formattedDuration}]` : `Time tracked: ${formattedDuration}.`,
+                                                                  timerStart: undefined,
+                                                                  accumulatedSeconds: 0,
+                                                                };
+                                                                
+                                                                // Track second operator if admin/manager completing on behalf of assigned user
+                                                                if ((operator.role === 'Admin' || operator.role === 'Production Manager') 
+                                                                    && procData.assignedUserId !== operator.id) {
+                                                                  updProcesses[pIdx].secondOperatorId = operator.id;
+                                                                  updProcesses[pIdx].secondCompletionDate = new Date().toISOString().split('T')[0];
+                                                                }
+
+                                                                updatedSubprojects[sIdx].processes = updProcesses;
+
+                                                                handleUpdateProjectSchema({
+                                                                  ...proj,
+                                                                  subProjects: updatedSubprojects
+                                                                });
+                                                              }}
+                                                              className={`px-2 py-1 text-[9px] font-black uppercase tracking-wider min-w-[70px] ${
+                                                                isStepDone
+                                                                  ? 'bg-green-500/10 text-green-400 border border-green-900/30 font-bold'
+                                                                  : 'bg-green-600 text-white hover:bg-green-500 border border-green-600'
+                                                              }`}
+                                                            >
+                                                              {isStepDone ? '✓ Sign-off' : 'Complete'}
+                                                            </button>
+                                                          </>
+                                                        )}
+
+                                                        {/* Status button for Pending/Completed */}
+                                                        {!proc.status && (
+                                                          <button
+                                                            onClick={() => {
+                                                              const updatedSubprojects = [...proj.subProjects];
+                                                              const updProcesses = [...updatedSubprojects[sIdx].processes];
+                                                              const nextStatus = isStepDone ? 'Pending' : 'Completed';
+                                                              
+                                                              updProcesses[pIdx] = { 
+                                                                ...updProcesses[pIdx], 
+                                                                status: nextStatus as any,
+                                                                completionDate: nextStatus === 'Completed' ? new Date().toISOString().split('T')[0] : undefined,
+                                                                checkedByUserId: nextStatus === 'Completed' ? operator.id : undefined
+                                                              };
+                                                              updatedSubprojects[sIdx].processes = updProcesses;
+
+                                                              handleUpdateProjectSchema({
+                                                                ...proj,
+                                                                subProjects: updatedSubprojects
+                                                              });
+                                                            }}
+                                                            className={`px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${
+                                                              isStepDone
+                                                                ? 'bg-green-500/10 text-green-400 border border-green-900/30 font-bold'
+                                                                : 'bg-zinc-900 text-zinc-500 hover:border-orange-500 hover:text-orange-400 border border-zinc-800 text-[9px]'
+                                                            }`}
+                                                          >
+                                                            {isStepDone ? '✓ Sign-off' : 'Pending'}
+                                                          </button>
+                                                        )}
                                                       </div>
                                                     </div>
                                                   );
@@ -1238,6 +1396,7 @@ export default function App() {
                 <ItemsCatalog
                   items={items}
                   allMaterials={materials}
+                  stations={stations}
                   currentUser={operator}
                   onUpdateItems={updateItemsState}
                 />

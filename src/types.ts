@@ -103,6 +103,12 @@ export interface SubProjectProcess {
   completionDate?: string;
   checkedByUserId?: string; // Quality controller signature (ISO 9001)
   notes?: string;
+  timerStart?: number; // epoch ms when "In Progress" was marked (wall-clock)
+  accumulatedSeconds?: number; // previously paused/accumulated active seconds
+  overtimeReason?: string; // worker's explanation if auto-stopped at 9h wall-clock
+  autoStopped?: boolean; // true if timer hit 9h wall-clock limit
+  secondOperatorId?: string; // Admin/Manager who completed as second operator
+  secondCompletionDate?: string; // When second operator signed off
 }
 
 export interface SubProject {

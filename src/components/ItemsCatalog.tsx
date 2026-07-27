@@ -4,13 +4,14 @@
  */
 
 import React, { useState } from 'react';
-import { Item, Material, Drawing, ProcessTemplate, CutListItem, SubItemRelation } from '../types';
+import { Item, Material, Drawing, ProcessTemplate, CutListItem, SubItemRelation, Station } from '../types';
 import { generateNextItemId } from '../utils';
 import { Search, Plus, Trash2, ShieldAlert, FileText, Share2, Layers, CheckSquare, PlusCircle, Paperclip } from 'lucide-react';
 
 interface ItemsCatalogProps {
   items: Item[];
   allMaterials: Material[];
+  stations: Station[];
   currentUser: { name: string };
   onUpdateItems: (updatedItems: Item[]) => void;
 }
@@ -18,6 +19,7 @@ interface ItemsCatalogProps {
 export default function ItemsCatalog({
   items,
   allMaterials,
+  stations,
   currentUser,
   onUpdateItems
 }: ItemsCatalogProps) {
@@ -138,26 +140,16 @@ export default function ItemsCatalog({
   // Dynamic sequence of processes
   const [processesReq, setProcessesReq] = useState<{ name: string; estimatedHours: number }[]>([]);
   
-  // Dynamic process dropdown presets
-  const [processPresets, setProcessPresets] = useState<string[]>([
-    'CNC Mill',
-    'CNC Lathe',
-    'Folding(panbreak)',
-    'Press',
-    'Fabrication',
-    'Pre-prep Sanding',
-    'Finish Sanding',
-    'Powdercoating',
-    'Welding',
-    'Bansaw(pre-Fabrication)',
-    'Supplier-pre-prep-work'
-  ]);
+  // Process dropdown presets derived from active work stations
+  const stationProcessPresets = stations.map(s => s.name);
+  const [customPresets, setCustomPresets] = useState<string[]>([]);
+  const processPresets = [...stationProcessPresets, ...customPresets];
   const [newPresetVal, setNewPresetVal] = useState('');
 
   const handleAddNewPreset = () => {
     const trimmed = newPresetVal.trim();
     if (trimmed && !processPresets.some(p => p.toLowerCase() === trimmed.toLowerCase())) {
-      setProcessPresets([...processPresets, trimmed]);
+      setCustomPresets([...customPresets, trimmed]);
       setNewPresetVal('');
     }
   };
@@ -202,7 +194,7 @@ export default function ItemsCatalog({
   };
 
   const handleAddProcess = () => {
-    setProcessesReq([...processesReq, { name: processPresets[0] || 'CNC Mill', estimatedHours: 1.0 }]);
+    setProcessesReq([...processesReq, { name: stations[0]?.name || '', estimatedHours: 1.0 }]);
   };
   const handleRemoveProcess = (idx: number) => {
     setProcessesReq(processesReq.filter((_, i) => i !== idx));
