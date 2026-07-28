@@ -41,9 +41,9 @@ COPY --from=builder /app/node_modules/@prisma/ ./node_modules/@prisma/
 COPY prisma/schema.prisma ./prisma/
 COPY prisma/seed.sql ./prisma/
 
-# Copy entrypoint script
+# Copy entrypoint script (convert CRLF to LF for Linux compatibility)
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Create directories that the app expects at runtime
 RUN mkdir -p /app/prisma /app/uploads/drawings /app/uploads/csv
