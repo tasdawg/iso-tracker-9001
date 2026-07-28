@@ -246,6 +246,32 @@ docker compose up -d
 
 **Note:** `docker compose down -v` removes named volumes. If you have important data in volumes (not bind mounts), backup first with `docker run --rm -v iso-tracker_prisma:/data -v /tmp:/backup alpine tar czf /backup/prisma.tar.gz -C /data .`
 
+### Force update mode (automatic on restart)
+
+For a **non-destructive force update** that preserves your database, set `FORCE_UPDATE=1` in docker-compose.yml:
+
+```yaml
+environment:
+  - GIT_REPO=https://github.com/tasdawg/iso-tracker-9001.git
+  - GITHUB_TOKEN=ghp_your_token_here
+  - FORCE_UPDATE=1  # Enable force update mode
+```
+
+**What happens:**
+1. Backs up current database before any changes
+2. Forces `git reset --hard origin/main` to discard ALL local code changes
+3. Pulls fresh code from remote with `--force-with-lease`
+4. Rebuilds application (npm ci, prisma generate, vite build)
+5. Restores database from backup after successful update
+
+**When to use:**
+- Git merge conflicts blocking auto-update cycle
+- Corrupted node_modules or prisma client state
+- Need to force-sync code without manual intervention
+- Automated deployments where you want guaranteed fresh code
+
+**Note:** Database is preserved via automatic backup/restore. Local .db files (test.db, etc.) are also backed up and restored after update.
+
 ### Version tracking and backup rotation
 
 - **Version file**: `.container-version` stores the last successfully deployed commit hash. On startup, entrypoint compares this against `origin/main` to detect updates.

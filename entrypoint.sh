@@ -71,7 +71,123 @@ else
   }
 fi
 
-# ---- Step 1: Check if git repo is configured ----
+# ---- Step 1: Check if FORCE_UPDATE mode is enabled ----
+if [ "$FORCE_UPDATE" = "1" ]; then
+  log "[FORCE] FORCE_UPDATE=1 detected — running full reset procedure..."
+  
+  # Backup current database before destructive operations
+  mkdir -p "$BACKUP_DIR"
+  TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
+  BACKUP_FILE="$BACKUP_DIR/dev.db-${TIMESTAMP}.bck"
+  
+  if [ -f "$DB_PATH" ]; then
+    cp "$DB_PATH" "$BACKUP_FILE"
+    log "[FORCE] Database backed up to: $(basename $BACKUP_FILE)"
+  else
+    log "[FORCE] No existing database — nothing to back up."
+  fi
+  
+  # Remove untracked backup files that would block git operations
+  if ls prisma/database-ISO-9001-*.bck 1>/dev/null 2>&1; then
+    log "[FORCE] Removing untracked backup files..."
+    rm -f prisma/database-ISO-9001-*.bck
+  fi
+  
+  # Back up any other local .db files (test.db, etc.)
+  for db_file in prisma/*.db; do
+    if [ -f "$db_file" ] && ! git ls-files --error-unmatch "$db_file" >/dev/null 2>&1; then
+      log "[FORCE] Backing up untracked database: $(basename $db_file)"
+      cp "$db_file" "$BACKUP_DIR/$(basename $db_file)-${TIMESTAMP}.bck"
+    fi
+  done
+  
+  # Force reset to discard ALL local changes
+  log "[FORCE] Forcing git reset to remote state..."
+  if ! git fetch origin "${GIT_BRANCH:-main}" 2>&1; then
+    log "[FORCE] ERROR: git fetch failed. Restoring database and exiting."
+    if [ -f "$BACKUP_FILE" ]; then
+      cp "$BACKUP_FILE" "$DB_PATH"
+    fi
+    exit 1
+  fi
+  
+  git reset --hard "origin/${GIT_BRANCH:-main}" 2>&1 || {
+    log "[FORCE] ERROR: git reset failed. Restoring database and exiting."
+    if [ -f "$BACKUP_FILE" ]; then
+      cp "$BACKUP_FILE" "$DB_PATH"
+    fi
+    exit 1
+  }
+  
+  # Pull latest code (safe after hard reset)
+  log "[FORCE] Pulling fresh code from remote..."
+  if ! git pull --force-with-lease origin "${GIT_BRANCH:-main}" 2>&1; then
+    log "[FORCE] ERROR: git pull failed. Restoring database and exiting."
+    if [ -f "$BACKUP_FILE" ]; then
+      cp "$BACKUP_FILE" "$DB_PATH"
+    fi
+    exit 1
+  fi
+  
+  # Rebuild application from scratch
+  log "[FORCE] Rebuilding application..."
+  npm ci --omit=dev 2>&1 || {
+    log "[FORCE] ERROR: npm ci failed. Restoring database and exiting."
+    if [ -f "$BACKUP_FILE" ]; then
+      cp "$BACKUP_FILE" "$DB_PATH"
+    fi
+    exit 1
+  }
+  
+  npx prisma generate 2>&1 || {
+    log "[FORCE] ERROR: prisma generate failed. Restoring database and exiting."
+    if [ -f "$BACKUP_FILE" ]; then
+      cp "$BACKUP_FILE" "$DB_PATH"
+    fi
+    exit 1
+  }
+  
+  npm run build 2>&1 || {
+    log "[FORCE] ERROR: Build failed. Restoring database and exiting."
+    if [ -f "$BACKUP_FILE" ]; then
+      cp "$BACKUP_FILE" "$DB_PATH"
+    fi
+    exit 1
+  }
+  
+  # Restore database from backup (preserves local data)
+  log "[FORCE] Restoring database from backup..."
+  if [ -f "$BACKUP_FILE" ]; then
+    cp "$BACKUP_FILE" "$DB_PATH"
+    log "[FORCE] Database restored successfully."
+  fi
+  
+  # Restore any other backed-up databases
+  for backup_file in "$BACKUP_DIR"/*.db-${TIMESTAMP}.bck; do
+    if [ -f "$backup_file" ]; then
+      db_name=$(echo "$(basename $backup_file)" | sed "s/-${TIMESTAMP}\.bck//")
+      if [ "$db_name" != "dev.db" ] && [ -f "prisma/$db_name" ]; then
+        log "[FORCE] Restoring: prisma/$db_name"
+        cp "$backup_file" "prisma/$db_name"
+      fi
+    fi
+  done
+  
+  # Update version tracking
+  LATEST_COMMIT=$(git rev-parse HEAD)
+  echo "$LATEST_COMMIT" > "$VERSION_FILE"
+  log "[FORCE] Version updated to $LATEST_COMMIT"
+  
+  # Enable WAL mode on restored database
+  if [ -f "$DB_PATH" ]; then
+    sqlite3 "$DB_PATH" "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=30000;"
+  fi
+  
+  log "[FORCE] Full reset complete. Starting server..."
+  exec node dist/server.cjs
+fi
+
+# ---- Step 2: Check if git repo is configured ----
 if [ -z "$GIT_REPO" ]; then
   log "[UPDATE] GIT_REPO not set — skipping auto-update. Running current code."
   exec node dist/server.cjs
