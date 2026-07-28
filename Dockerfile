@@ -1,5 +1,5 @@
 # ---- STAGE 1: Builder ----
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
@@ -19,14 +19,14 @@ COPY assets/ ./assets/
 RUN npm run build
 
 # ---- STAGE 2: Runtime ----
-FROM node:20-alpine AS runtime
+FROM node:20-slim AS runtime
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install wget for healthcheck, git for updates, sqlite3 CLI for WAL setup, and OpenSSL 1.1 for Prisma
-RUN apk add --no-cache wget git sqlite && ln -s /lib/libssl.so.3 /lib/libssl.so.1.1 && ln -s /lib/libcrypto.so.3 /lib/libcrypto.so.1.1
+# Install wget for healthcheck, git for updates, sqlite3 CLI for WAL setup
+RUN apt-get update && apt-get install -y --no-install-recommends wget git sqlite3 libssl1.1 && rm -rf /var/lib/apt/lists/*
 
 # Copy production dependencies only (fast, deterministic)
 COPY package.json package-lock.json ./
