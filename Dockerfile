@@ -25,8 +25,8 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install wget for healthcheck, git for updates, sqlite3 CLI for WAL setup, and OpenSSL 1.1 compat for Prisma
-RUN apk add --no-cache wget git sqlite openssl1.1-compat
+# Install wget for healthcheck, git for updates, sqlite3 CLI for WAL setup, and OpenSSL 1.1 for Prisma
+RUN apk add --no-cache wget git sqlite && ln -s /lib/libssl.so.3 /lib/libssl.so.1.1 && ln -s /lib/libcrypto.so.3 /lib/libcrypto.so.1.1
 
 # Copy production dependencies only (fast, deterministic)
 COPY package.json package-lock.json ./
