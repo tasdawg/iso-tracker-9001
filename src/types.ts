@@ -67,6 +67,7 @@ export interface Drawing {
   uploadDate: string;
   uploadedBy: string;
   designVersion: string; // e.g., "Rev A"
+  filePath?: string; // Local server path to uploaded file (e.g. /uploads/drawings/xxx.pdf)
 }
 
 export interface ProcessTemplate {

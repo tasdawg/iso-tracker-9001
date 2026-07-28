@@ -167,20 +167,33 @@ export default function MaterialsManager({
     setImportStep(2);
   };
 
-  // Parse custom uploaded files
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  // Parse custom uploaded files via server upload
+  const handleFileUpload = async (file: File) => {
     if (!file) return;
 
-    setCsvFile(file);
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const text = evt.target?.result as string;
-      setCsvRawText(text);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const result = await res.json();
+      
+      if (!result.success) {
+        alert(result.error || 'Upload failed');
+        return;
+      }
+
+      // Fetch the uploaded file content from server
+      const textRes = await fetch(result.filePath);
+      const text = await textRes.text();
+      
       if (!text) {
         alert("The uploaded CSV file is empty.");
         return;
       }
+
+      setCsvFile(file);
+      setCsvRawText(text);
 
       const parsedLines = parseCSV(text);
       if (parsedLines.length === 0) {
@@ -226,8 +239,10 @@ export default function MaterialsManager({
 
       setMapping(autoMapping);
       setImportStep(2);
-    };
-    reader.readAsText(file);
+    } catch (err) {
+      alert('Upload failed. Please try again.');
+      console.error(err);
+    }
   };
 
   // Convert mapped matrix rows and insert them
@@ -764,16 +779,19 @@ export default function MaterialsManager({
               {/* STEP 1: UPLOAD / INGESTION */}
               {importStep === 1 && (
                 <div className="space-y-6 py-4">
-                  <div className="border-2 border-dashed border-zinc-800 hover:border-orange-500/80 p-8 h-48 flex flex-col justify-center items-center rounded-lg transition-all relative text-center bg-zinc-950/40">
+                  <div className="border-2 border-dashed border-zinc-800 hover:border-orange-500/80 p-8 flex flex-col justify-center items-center rounded-lg transition-all text-center bg-zinc-950/40">
                     <input
                       type="file"
                       accept=".csv"
-                      onChange={handleFileUpload}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      onChange={e => handleFileUpload(e.target.files?.[0] || null)}
+                      className="hidden"
+                      id="csv-upload-input"
                     />
-                    <Paperclip size={28} className="text-zinc-500 mb-2" />
-                    <p className="font-bold text-zinc-300">Drag & Drop Supplier Statement CSV</p>
-                    <p className="text-[10px] text-zinc-500 mt-1 uppercase">or click to browse local folders</p>
+                    <label htmlFor="csv-upload-input" className="cursor-pointer flex flex-col items-center">
+                      <Paperclip size={28} className="text-zinc-500 mb-2" />
+                      <p className="font-bold text-zinc-300">Upload Supplier Statement CSV</p>
+                      <p className="text-[10px] text-zinc-500 mt-1 uppercase">Click to browse local folders</p>
+                    </label>
                   </div>
 
                   <div className="flex flex-col justify-center items-center gap-2 p-5 bg-[#09090b] border border-orange-500/20 text-center">

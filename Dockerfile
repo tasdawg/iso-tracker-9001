@@ -26,7 +26,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 # Install wget for healthcheck, git for updates, sqlite3 CLI for WAL setup
-RUN apt-get update && apt-get install -y --no-install-recommends wget git sqlite3 openssh && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends wget git sqlite3 openssl && rm -rf /var/lib/apt/lists/*
 
 # Copy production dependencies only (fast, deterministic)
 COPY package.json package-lock.json ./
