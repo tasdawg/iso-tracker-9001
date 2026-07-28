@@ -72,7 +72,6 @@ No separate `vite dev` step — `npm run dev` serves both the React UI and REST 
 
 ## Gotchas
 
-- HMR is disabled when `DISABLE_HMR=true` (set by AI Studio). If edits don't hot-reload, check that env var.
 - User deletion fails if any process in any project still references them via `assignedUserId`.
 - Station deletion is soft-delete only — it sets `isActive: false`, never removes the row.
 
@@ -85,7 +84,7 @@ A production-ready Docker Compose setup with **auto-update from GitHub**, **data
 | File | Purpose |
 |------|---------|
 | `Dockerfile` | Multi-stage build (builder → runtime). Final image contains only compiled artifacts + prod deps. |
-| `docker-compose.yml` | Service definition with persistent volumes, healthcheck, restart policy. |
+| `docker-compose.yml` | Service definition with persistent volumes, healthcheck, restart policy, and `iso-tracker_app` network for Cloudflare proxy routing. |
 | `entrypoint.sh` | Startup script: version tracking, git updates, DB backup, migration detection, rebuild. |
 | `.dockerignore` | Excludes source/dev files from build context to keep image small. |
 
@@ -93,14 +92,23 @@ A production-ready Docker Compose setup with **auto-update from GitHub**, **data
 
 ```bash
 # 1. Edit docker-compose.yml — set your actual GitHub repo URL (GIT_REPO)
+#    If using Cloudflare proxy, ensure the network name matches your setup
 # 2. Build and launch
 docker compose up -d --build
 
 # 3. Watch logs for update/migration output
 docker compose logs -f iso-tracker
 
-# 4. Access the app at http://localhost:3000
+# 4. Access the app at http://localhost:3000 (or via Cloudflare proxy)
 ```
+
+### Public URL configuration
+
+When deploying behind a reverse proxy (e.g., Cloudflare), uploaded files need full public URLs to render correctly in drawing links. Configure this in the Settings panel under "SaaS":
+
+- **Public URL of Installation**: Set to your domain (e.g., `https://yourdomain.com`)
+- Relative paths like `/uploads/drawings/file.pdf` are automatically resolved to `https://yourdomain.com/uploads/drawings/file.pdf`
+- Leave blank for localhost/dev deployments — links stay as relative paths
 
 ### Startup flow
 
@@ -181,7 +189,16 @@ docker compose restart iso-tracker
 
 # View update/migration logs
 docker compose logs -f iso-tracker | grep -E "UPDATE|BACKUP|MIGRATE|BUILD"
+
+# Check current deployed version
+docker exec iso-tracker cat /app/.container-version
 ```
+
+### Version tracking and backup rotation
+
+- **Version file**: `.container-version` stores the last successfully deployed commit hash. On startup, entrypoint compares this against `origin/main` to detect updates.
+- **Backup retention**: Keeps the last 14 database backups in `/app/prisma/backups/`. Older backups are automatically deleted during each update cycle.
+- **Network isolation**: The container runs on a dedicated Docker network (`iso-tracker_app`) that enables internal service access for Cloudflare proxy routing without exposing ports externally.
 
 ### For private repositories (optional)
 
