@@ -34,8 +34,8 @@ RUN npm ci --omit=dev
 
 # Copy built artifacts from builder stage
 COPY --from=builder /app/dist/ ./dist/
-COPY --from=builder /app/node_modules/.prisma/ ./node_modules/.prisma/ 2>/dev/null || true
-COPY --from=builder /app/node_modules/@prisma/ ./node_modules/@prisma/ 2>/dev/null || true
+COPY --from=builder /app/node_modules/.prisma/ ./node_modules/.prisma/
+COPY --from=builder /app/node_modules/@prisma/ ./node_modules/@prisma/
 
 # Copy prisma schema (needed for runtime seed logic and future migrations)
 COPY prisma/schema.prisma ./prisma/
