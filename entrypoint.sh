@@ -142,6 +142,31 @@ else
   log "[BACKUP] No existing database — nothing to back up (first deployment)."
 fi
 
+# ---- Step 5.5: Handle local database changes before pull ----
+log "[UPDATE] Checking for local database changes..."
+
+# Check if dev.db has been modified locally (not tracked by git)
+if [ -f "$DB_PATH" ] && ! git ls-files --error-unmatch prisma/dev.db >/dev/null 2>&1; then
+  log "[UPDATE] Local dev.db detected — backing up before pull."
+  LOCAL_DB_BACKUP="$BACKUP_DIR/local-dev.db-${TIMESTAMP}.bck"
+  cp "$DB_PATH" "$LOCAL_DB_BACKUP"
+  log "[UPDATE] Local database backed up to: $(basename $LOCAL_DB_BACKUP)"
+fi
+
+# Remove untracked backup files that would block the pull
+if ls prisma/database-ISO-9001-*.bck 1>/dev/null 2>&1; then
+  log "[UPDATE] Removing untracked backup files that would block merge..."
+  rm -f prisma/database-ISO-9001-*.bck
+fi
+
+# Check for other untracked .db files (like test.db) and back them up
+for db_file in prisma/*.db; do
+  if [ -f "$db_file" ] && ! git ls-files --error-unmatch "$db_file" >/dev/null 2>&1; then
+    log "[UPDATE] Backing up untracked database: $(basename $db_file)"
+    cp "$db_file" "$BACKUP_DIR/$(basename $db_file)-${TIMESTAMP}.bck"
+  fi
+done
+
 # ---- Step 6a: Rotate old backups (keep last 14) ----
 log "[BACKUP] Rotating old backups (keeping last $MAX_BACKUPS)..."
 cd "$BACKUP_DIR"
@@ -160,6 +185,25 @@ if ! git pull origin "${GIT_BRANCH:-main}" 2>&1; then
   fi
   exec node dist/server.cjs
 fi
+
+# ---- Step 6b.5: Restore local databases if they were backed up ----
+log "[UPDATE] Restoring any locally-modified databases..."
+for backup_file in "$BACKUP_DIR"/*-dev.db-${TIMESTAMP}.bck; do
+  if [ -f "$backup_file" ] && [ "$backup_file" != "$BACKUP_FILE" ]; then
+    log "[UPDATE] Restoring local database from: $(basename $backup_file)"
+    cp "$backup_file" "$DB_PATH"
+  fi
+done
+
+for backup_file in "$BACKUP_DIR"/*.db-${TIMESTAMP}.bck; do
+  if [ -f "$backup_file" ]; then
+    db_name=$(echo "$(basename $backup_file)" | sed "s/-${TIMESTAMP}\.bck//")
+    if [ "$db_name" != "dev.db" ] && [ -f "$DB_PATH" ]; then
+      log "[UPDATE] Restoring: prisma/$db_name"
+      cp "$backup_file" "prisma/$db_name"
+    fi
+  fi
+done
 
 # ---- Step 6c: Detect schema changes & run migrations ----
 NEW_SCHEMA_HASH=$(md5sum prisma/schema.prisma 2>/dev/null | cut -d' ' -f1 || echo "unknown")
