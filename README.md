@@ -99,6 +99,8 @@ A production-ready Docker Compose setup with **auto-update from GitHub**, **data
 
 ```bash
 # 1. Edit docker-compose.yml — set your actual GitHub repo URL (GIT_REPO)
+#    For private repos, add GITHUB_TOKEN to environment section:
+#      - GITHUB_TOKEN=ghp_your_token_here
 #    If using Cloudflare proxy, ensure the network name matches your setup
 # 2. Build and launch
 docker compose up -d --build
@@ -143,9 +145,14 @@ Container starts → entrypoint.sh runs
         │       ├── Verify backup is non-empty; if empty, ABORT update
         │       └── Rotate old backups — keep last 14, delete the rest
         │
+        ├─ 6a. BACKUP local database changes (before git pull)
+        │       ├── Copy modified .db files (test.db, etc.) → backups/
+        │       ├── Remove blocking untracked backup files temporarily
+        │       └── Restore after successful pull to preserve local state
+        │
         ├─ 6b. git pull origin main
         │     ├─ FAIL → restore DB from backup, exit with error code 1
-        │     └─ SUCCESS → continue
+        │     └─ SUCCESS → continue (local databases restored)
         │
         ├─ 6c. Detect schema changes (md5 of prisma/schema.prisma)
         │     ├─ Changed + migrations exist → prisma migrate deploy
@@ -179,6 +186,7 @@ Container starts → entrypoint.sh runs
 | **Prisma client/schema mismatch** | `prisma generate` always runs after schema change or full rebuild | Client is regenerated to match the current schema.prisma before server starts. |
 | **First run (no .container-version file)** | Initializes version tracking, skips git comparison on truly first boot | No unnecessary network calls on initial deployment. |
 | **Private repo authentication** | HTTPS clone fails without credentials | Mount SSH key or pass `GITHUB_TOKEN` env var (see below). |
+| **Local database files block git pull** | Untracked .db files in prisma/ cause merge conflicts during auto-update | Pre-pull backup logic automatically backs up local databases, removes blocking files temporarily, and restores them after successful pull — no manual intervention needed. |
 | **Horizontal scaling (multiple containers)** | SQLite doesn't support concurrent writes from multiple processes | Single-container design. For scaling, migrate to PostgreSQL (requires schema changes). |
 
 ### Running and maintenance
