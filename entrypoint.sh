@@ -16,10 +16,42 @@ log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
-# ---- Step 0: Enable SQLite WAL mode for better concurrency ----
+# ---- Step 0: Validate and initialize database schema ----
+log "[DB] Validating database schema..."
+
+# Required tables for the application
+REQUIRED_TABLES="Client Material Item Project InventoryLog User Station Setting"
+
 if [ -f "$DB_PATH" ]; then
+  # Enable WAL mode on existing database
   log "[DB] Enabling WAL mode on existing database..."
   sqlite3 "$DB_PATH" "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=30000;"
+  
+  # Check if all required tables exist
+  MISSING_TABLES=""
+  for table in $REQUIRED_TABLES; do
+    TABLE_EXISTS=$(sqlite3 "$DB_PATH" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='$table';" 2>/dev/null)
+    if [ "$TABLE_EXISTS" != "1" ]; then
+      MISSING_TABLES="$MISSING_TABLES $table"
+    fi
+  done
+  
+  if [ -n "$MISSING_TABLES" ]; then
+    log "[DB] Missing tables detected:$MISSING_TABLES"
+    log "[DB] Running prisma migrate deploy to create missing tables..."
+    npx prisma migrate deploy 2>&1 || log "[DB] WARNING: Migration failed, server will attempt to handle missing tables."
+  else
+    # Check if global Setting record exists
+    SETTING_EXISTS=$(sqlite3 "$DB_PATH" "SELECT count(*) FROM Setting WHERE id='global';" 2>/dev/null)
+    if [ "$SETTING_EXISTS" != "1" ]; then
+      log "[DB] Global setting record missing — server will seed on first startup."
+    else
+      log "[DB] Database schema validated successfully."
+    fi
+  fi
+else
+  log "[DB] No database found — creating fresh database with schema..."
+  npx prisma migrate deploy 2>&1 || log "[DB] WARNING: Schema creation failed, server will attempt to create tables."
 fi
 
 # ---- Step 1: Check if git repo is configured ----
