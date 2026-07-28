@@ -41,6 +41,9 @@ COPY --from=builder /app/node_modules/@prisma/ ./node_modules/@prisma/
 COPY prisma/schema.prisma ./prisma/
 COPY prisma/seed.sql ./prisma/
 
+# Regenerate Prisma client in runtime stage with correct binary targets
+RUN npx prisma generate
+
 # Copy entrypoint script (convert CRLF to LF for Linux compatibility)
 COPY entrypoint.sh /app/entrypoint.sh
 RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
