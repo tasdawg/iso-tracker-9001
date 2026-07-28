@@ -245,6 +245,15 @@ export default function ProjectDetails({
   const [millCertFile, setMillCertFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
+  // States for add supplier modal
+  const [showAddSupplierModal, setShowAddSupplierModal] = useState(false);
+  const [newSupplierName, setNewSupplierName] = useState('');
+  const [newSupplierContact, setNewSupplierContact] = useState('');
+  const [newSupplierEmail, setNewSupplierEmail] = useState('');
+  const [newSupplierPhone, setNewSupplierPhone] = useState('');
+  const [newSupplierAddress, setNewSupplierAddress] = useState('');
+  const [newSupplierNotes, setNewSupplierNotes] = useState('');
+
   // Find Client name or details
   const [clients] = useState(() => {
     try {
@@ -418,6 +427,56 @@ export default function ProjectDetails({
     } finally {
       setUploading(false);
     }
+  };
+
+  const openAddSupplierModal = () => {
+    setNewSupplierName(outsourceSupplier || '');
+    setNewSupplierContact('');
+    setNewSupplierEmail('');
+    setNewSupplierPhone('');
+    setNewSupplierAddress('');
+    setNewSupplierNotes('');
+    setShowAddSupplierModal(true);
+  };
+
+  const handleAddSupplier = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!newSupplierName.trim() || !newSupplierContact.trim() || !newSupplierEmail.trim()) {
+      alert('Please enter company name, contact person, and email address.');
+      return;
+    }
+
+    const nextId = `CLI-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    const newSupplier = {
+      id: nextId,
+      name: newSupplierContact.trim(),
+      companyName: newSupplierName.trim(),
+      email: newSupplierEmail.trim(),
+      phone: newSupplierPhone.trim(),
+      address: newSupplierAddress.trim(),
+      isoComplianceNotes: newSupplierNotes.trim() || 'Standard ISO 9001 regulations and weld criteria tracking apply.',
+      relationType: 'Supplier' as const,
+      isDeleted: false
+    };
+
+    // Update localStorage clients
+    try {
+      const saved = localStorage.getItem('iso_clients_v1');
+      const clientsList = saved ? JSON.parse(saved) : [];
+      clientsList.push(newSupplier);
+      localStorage.setItem('iso_clients_v1', JSON.stringify(clientsList));
+      
+      // Refresh suppliers list in state
+      setClients([...clients, newSupplier]);
+    } catch (e) {
+      console.error('Failed to save supplier:', e);
+    }
+
+    // Set the supplier name in the outsource form
+    setOutsourceSupplier(newSupplierName.trim());
+    setShowAddSupplierModal(false);
+    alert(`Supplier "${newSupplierName.trim()}" registered successfully!`);
   };
 
   // Overall ISO release and audit certificate generator
@@ -876,41 +935,7 @@ export default function ProjectDetails({
                               )}
                               <button
                                 type="button"
-                                onClick={() => {
-                                  if (!outsourceSupplier.trim()) {
-                                    alert('Please enter a supplier company name first.');
-                                    return;
-                                  }
-                                  
-                                  // Create new supplier client
-                                  const nextId = `CLI-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-                                  const newSupplier = {
-                                    id: nextId,
-                                    name: 'Primary Contact',
-                                    companyName: outsourceSupplier.trim(),
-                                    email: '',
-                                    phone: '',
-                                    address: '',
-                                    isoComplianceNotes: 'Standard ISO 9001 regulations and weld criteria tracking apply.',
-                                    relationType: 'Supplier' as const,
-                                    isDeleted: false
-                                  };
-                                  
-                                  // Update localStorage clients
-                                  try {
-                                    const saved = localStorage.getItem('iso_clients_v1');
-                                    const clientsList = saved ? JSON.parse(saved) : [];
-                                    clientsList.push(newSupplier);
-                                    localStorage.setItem('iso_clients_v1', JSON.stringify(clientsList));
-                                    
-                                    // Refresh suppliers list
-                                    setClients([...clients, newSupplier]);
-                                  } catch (e) {
-                                    console.error('Failed to save supplier:', e);
-                                  }
-                                  
-                                  alert(`Supplier "${outsourceSupplier.trim()}" added successfully!`);
-                                }}
+                                onClick={openAddSupplierModal}
                                 className="px-3 py-2 bg-orange-500 hover:bg-orange-400 text-black text-[10px] font-bold uppercase tracking-wider whitespace-nowrap"
                               >
                                 + Add Supplier
@@ -994,6 +1019,146 @@ export default function ProjectDetails({
                   );
                 })}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Add Supplier Modal */}
+        {showAddSupplierModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="w-full max-w-lg bg-zinc-950 border border-zinc-800 text-white relative shadow-2xl">
+              <div className="absolute top-0 right-0 p-3">
+                <button
+                  onClick={() => setShowAddSupplierModal(false)}
+                  className="text-zinc-500 hover:text-orange-500 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-6 border-b border-zinc-800 bg-zinc-900/50">
+                <span className="text-[9px] uppercase tracking-widest text-orange-500 font-bold block mb-1">
+                  ISO 9001 Partner Onboarding
+                </span>
+                <h3 className="font-bold text-base uppercase tracking-widest text-[#cbd5e1] font-sans">
+                  Register New Supplier Partner Spec
+                </h3>
+              </div>
+
+              <form onSubmit={handleAddSupplier} className="p-6 space-y-4 text-xs font-mono">
+                <div className="grid grid-cols-2 gap-4">
+                  
+                  <div className="space-y-1 col-span-2">
+                    <label className="block text-[9px] uppercase font-bold text-zinc-500">
+                      Corporate Entity / Company LLC <span className="text-orange-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Titan Aerospace Australia"
+                      className="w-full bg-black border border-zinc-800 p-2 text-xs focus:border-orange-500 outline-none"
+                      value={newSupplierName}
+                      onChange={e => setNewSupplierName(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-1 col-span-2">
+                    <label className="block text-[9px] uppercase font-bold text-zinc-500">
+                      Relation / Flow Type <span className="text-orange-500">*</span>
+                    </label>
+                    <select
+                      className="w-full bg-black border border-zinc-800 p-2 text-xs focus:border-orange-500 outline-none"
+                      value="Supplier"
+                      disabled
+                    >
+                      <option value="Supplier">Supplier (Provides Raw Material Stocks)</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1 col-span-1">
+                    <label className="block text-[9px] uppercase font-bold text-zinc-500">
+                      Primary Contact Officer <span className="text-orange-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Sarah Connor"
+                      className="w-full bg-black border border-zinc-800 p-2 text-xs focus:border-orange-500 outline-none"
+                      value={newSupplierContact}
+                      onChange={e => setNewSupplierContact(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-1 col-span-1">
+                    <label className="block text-[9px] uppercase font-bold text-zinc-500">
+                      Direct POC Email <span className="text-orange-500">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="purchasing@titan.aero"
+                      className="w-full bg-black border border-zinc-800 p-2 text-xs focus:border-orange-500 outline-none"
+                      value={newSupplierEmail}
+                      onChange={e => setNewSupplierEmail(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-1 col-span-1">
+                    <label className="block text-[9px] uppercase font-bold text-zinc-500">
+                      Direct Contact Phone
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. +61 3 9801 4402"
+                      className="w-full bg-black border border-zinc-800 p-2 text-xs focus:border-orange-500 outline-none"
+                      value={newSupplierPhone}
+                      onChange={e => setNewSupplierPhone(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-1 col-span-1">
+                    <label className="block text-[9px] uppercase font-bold text-zinc-500">
+                      FOB Facility Address
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Suburb, State, Country"
+                      className="w-full bg-black border border-zinc-800 p-2 text-xs focus:border-orange-500 outline-none"
+                      value={newSupplierAddress}
+                      onChange={e => setNewSupplierAddress(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-1 col-span-2">
+                    <label className="block text-[9px] uppercase font-bold text-zinc-500">
+                      ISO Weld Specs / Millcert Quality Requirements
+                    </label>
+                    <textarea
+                      rows={3}
+                      placeholder="e.g. Requires certified NDT structural audits. Standard batch numbers are steel stamps on load corners."
+                      className="w-full bg-black border border-zinc-800 p-2 text-xs focus:border-orange-500 outline-none"
+                      value={newSupplierNotes}
+                      onChange={e => setNewSupplierNotes(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-4 border-t border-zinc-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddSupplierModal(false)}
+                    className="bg-black hover:bg-zinc-900 text-zinc-400 px-4 py-2 uppercase tracking-wider text-[10px] border border-zinc-800"
+                  >
+                    Discard
+                  </button>
+                  <button
+                    type="submit"
+                    className="bg-orange-500 hover:bg-orange-400 text-black font-extrabold px-6 py-2 uppercase tracking-wider text-[10px]"
+                  >
+                    Confirm & Sync
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}
