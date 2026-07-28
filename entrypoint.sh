@@ -13,9 +13,9 @@ SCHEMA_VERSION_FILE="/app/.schema-version"
 MAX_BACKUPS=14
 PRISMA_BIN="./node_modules/.bin/prisma"
 
-# Ensure prisma binary exists (fallback to npx if local install missing)
+# Ensure prisma binary exists (fallback to npx with pinned version if local install missing)
 if [ ! -f "$PRISMA_BIN" ]; then
-  PRISMA_BIN="npx prisma"
+  PRISMA_BIN="npx prisma@5.22.0"
 fi
 
 log() {
