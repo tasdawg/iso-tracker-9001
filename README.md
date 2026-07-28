@@ -233,3 +233,65 @@ npx prisma migrate dev --name add_your_change_description
 ```
 
 This creates migration files in `prisma/migrations/` that the Docker entrypoint will automatically detect and apply on the next container restart. Without these files, Prisma attempts direct table alterations which may cause data loss.
+
+### Database Management
+
+The application supports multiple SQLite databases stored in the `prisma/` directory. Use this feature to maintain separate environments (dev, staging, production) or keep backup copies for quick switching.
+
+#### Available Databases
+
+| File | Purpose |
+|------|---------|
+| `prisma/dev.db` | Current active database (always used by Prisma client) |
+| `prisma/test.db` | Test/staging environment copy |
+| `prisma/*.bck` | Automatic backups created before updates or fresh installs |
+
+#### Switching Databases via UI
+
+1. Navigate to **Settings → Active Node Integrity Console**
+2. Scroll to **Database Selection** panel
+3. Select target database from dropdown (lists all `.db` files in `prisma/`)
+4. Enter authorization password (`startagain`)
+5. Click **Switch to Selected Database**
+6. Application reloads with the new database
+
+**Important:** Switching databases automatically creates a backup of the current `dev.db` before replacing it.
+
+#### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/databases` | GET | List all available databases with size and last modified timestamp |
+| `/api/databases/switch` | POST | Switch to a different database (requires password `startagain`) |
+
+**POST Body for switch:**
+```json
+{
+  "databaseName": "test.db",
+  "password": "startagain"
+}
+```
+
+#### Fresh Install with Admin Users
+
+The **Fresh Database Install** feature (Settings → CRITICAL: Fresh Database Install) resets the database to factory defaults and seeds admin users for immediate Manager mode access:
+
+- **Authorization password:** `startagain`
+- **Seeded users:** Robert Vance (Admin), Amelia Sterling (Production Manager), plus 5 worker accounts
+- **Seeded stations:** Lathe, Milling, Pressbrake, Bandsaw, Finishing/Polishing, Welding/Fabrication, Powder coating, Assembly
+- **Backup created** before reset in `prisma/database-ISO-9001-YYYY-MM-DD.bck`
+
+#### Prisma Version Requirements
+
+- **Minimum:** Prisma 5.22.0+ (fixes SQLite upsert panic on Windows/Node.js v22)
+- **Docker runtime:** Uses Debian base image (`node:20-slim`) for OpenSSL 3 compatibility with Prisma query engine
+- **Binary targets:** Schema.prisma includes `debian-openssl-3.0.x` for Docker deployments
+
+```bash
+# Verify installed version
+npm list prisma @prisma/client
+
+# Upgrade if needed
+npm install prisma@latest @prisma/client@latest --save-dev
+npx prisma generate
+```
