@@ -44,8 +44,8 @@ COPY --from=builder /app/node_modules/@prisma/ ./node_modules/@prisma/
 COPY prisma/schema.prisma ./prisma/
 COPY prisma/seed.sql ./prisma/
 
-# Regenerate Prisma client in runtime stage with correct binary targets (use local binary)
-RUN ./node_modules/.bin/prisma generate
+# Regenerate Prisma client in runtime stage with exact pinned version
+RUN npx prisma@5.22.0 generate
 
 # Copy entrypoint script (convert CRLF to LF for Linux compatibility)
 COPY entrypoint.sh /app/entrypoint.sh
