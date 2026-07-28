@@ -30,7 +30,7 @@ RUN apk add --no-cache wget git sqlite
 
 # Copy production dependencies only (fast, deterministic)
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && test -d node_modules/multer || { echo "ERROR: multer missing from node_modules"; ls node_modules/ | head -20; exit 1; }
+RUN npm ci --omit=dev && npm install multer@^2.2.0 --no-save 2>&1 | tail -5
 
 # Copy built artifacts from builder stage
 COPY --from=builder /app/dist/ ./dist/
