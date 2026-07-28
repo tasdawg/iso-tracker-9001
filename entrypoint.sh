@@ -27,7 +27,18 @@ if [ -f "$DB_PATH" ]; then
   log "[DB] Enabling WAL mode on existing database..."
   sqlite3 "$DB_PATH" "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=30000;"
   
-  # Check if all required tables exist
+  # ALWAYS run prisma migrate deploy to ensure all schema changes are applied
+  log "[DB] Running prisma migrate deploy to apply all pending migrations..."
+  npx prisma migrate deploy 2>&1 || {
+    log "[DB] ERROR: Migration failed! Attempting to recreate database..."
+    rm -f "$DB_PATH"
+    npx prisma migrate deploy 2>&1 || {
+      log "[DB] FATAL: Cannot create database. Exiting."
+      exit 1
+    }
+  }
+  
+  # Check if all required tables exist after migration
   MISSING_TABLES=""
   for table in $REQUIRED_TABLES; do
     TABLE_EXISTS=$(sqlite3 "$DB_PATH" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='$table';" 2>/dev/null)
@@ -37,9 +48,12 @@ if [ -f "$DB_PATH" ]; then
   done
   
   if [ -n "$MISSING_TABLES" ]; then
-    log "[DB] Missing tables detected:$MISSING_TABLES"
-    log "[DB] Running prisma migrate deploy to create missing tables..."
-    npx prisma migrate deploy 2>&1 || log "[DB] WARNING: Migration failed, server will attempt to handle missing tables."
+    log "[DB] ERROR: Missing tables after migration:$MISSING_TABLES"
+    log "[DB] Attempting to force schema sync..."
+    npx prisma db push 2>&1 || {
+      log "[DB] FATAL: Cannot sync schema. Exiting."
+      exit 1
+    }
   else
     # Check if global Setting record exists
     SETTING_EXISTS=$(sqlite3 "$DB_PATH" "SELECT count(*) FROM Setting WHERE id='global';" 2>/dev/null)
@@ -51,7 +65,10 @@ if [ -f "$DB_PATH" ]; then
   fi
 else
   log "[DB] No database found — creating fresh database with schema..."
-  npx prisma migrate deploy 2>&1 || log "[DB] WARNING: Schema creation failed, server will attempt to create tables."
+  npx prisma migrate deploy 2>&1 || {
+    log "[DB] ERROR: Schema creation failed!"
+    exit 1
+  }
 fi
 
 # ---- Step 1: Check if git repo is configured ----
