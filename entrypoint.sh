@@ -34,14 +34,22 @@ log "[UPDATE] Tracking repository: $GIT_REPO (branch: ${GIT_BRANCH:-main})"
 if [ ! -f "$VERSION_FILE" ]; then
   log "[VERSION] No stored version — first deployment."
   
-  # Check if database exists and has data
-  if [ -f "$DB_PATH" ] && [ "$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM sqlite_master WHERE type='table';" 2>/dev/null)" -gt 0 ]; then
-    log "[VERSION] Existing database found — treating as update deployment."
+  # Check if database exists and has tables
+  if [ -f "$DB_PATH" ] && [ "$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';" 2>/dev/null)" -gt 0 ]; then
+    log "[VERSION] Existing database with tables found — treating as update deployment."
     # Try to get the commit hash from git if available, otherwise use timestamp
     CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "deploy-$(date +%Y%m%d%H%M%S)")
     echo "$CURRENT_COMMIT" > "$VERSION_FILE"
   else
-    log "[VERSION] No existing database — fresh deployment. Database will be seeded on first server start."
+    log "[VERSION] No existing database or empty schema — fresh deployment."
+    # Ensure database schema exists (create tables if missing)
+    if [ ! -f "$DB_PATH" ]; then
+      log "[VERSION] Creating new database with schema..."
+      npx prisma migrate deploy 2>&1 || log "[VERSION] WARNING: Schema migration failed, server will attempt to create tables."
+    else
+      log "[VERSION] Database exists but has no tables — running migration to create schema..."
+      npx prisma migrate deploy 2>&1 || log "[VERSION] WARNING: Schema migration failed, server will attempt to create tables."
+    fi
     # Use a placeholder that forces update check on next restart
     echo "fresh-deploy-$(date +%Y%m%d%H%M%S)" > "$VERSION_FILE"
   fi
