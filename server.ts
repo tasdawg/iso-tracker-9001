@@ -101,35 +101,47 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   });
 });
 
-// Upload mill cert for supplier client
+// Upload mill cert for project sub-contract
 app.post('/api/upload-mill-cert', upload.single('millCert'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
   
-  const { clientId } = req.body;
-  if (!clientId) {
-    return res.status(400).json({ error: 'Client ID required' });
+  const { projectId, subProjectIndex } = req.body;
+  if (!projectId) {
+    return res.status(400).json({ error: 'Project ID required' });
   }
   
   const filePath = `/uploads/${req.file.filename}`;
   
   try {
-    // Update client with mill cert URL
-    await prisma.client.upsert({
-      where: { id: clientId },
-      update: { millCertUrl: filePath },
-      create: { 
-        id: clientId,
-        millCertUrl: filePath,
-        name: 'Unknown',
-        companyName: 'Unknown Company',
-        email: '',
-        phone: '',
-        address: '',
-        isoComplianceNotes: ''
-      }
-    });
+    // Get the project and update the subproject's outsourcedCertUrl
+    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    
+    // Parse subProjects JSON
+    let subProjects: any[] = [];
+    try {
+      subProjects = JSON.parse(project.subProjects || '[]');
+    } catch (e) {
+      console.error('[Upload] Failed to parse subProjects:', e);
+    }
+    
+    const idx = parseInt(subProjectIndex || '0', 10);
+    if (idx >= 0 && idx < subProjects.length) {
+      subProjects[idx] = {
+        ...subProjects[idx],
+        outsourcedCertUrl: filePath
+      };
+      
+      // Update project with modified subProjects
+      await prisma.project.update({
+        where: { id: projectId },
+        data: { subProjects: JSON.stringify(subProjects) }
+      });
+    }
     
     res.json({
       success: true,

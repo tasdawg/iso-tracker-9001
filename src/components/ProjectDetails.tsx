@@ -242,6 +242,8 @@ export default function ProjectDetails({
   const [outsourceBatch, setOutsourceBatch] = useState('');
   const [outsourceCert, setOutsourceCert] = useState('');
   const [outsourceStatus, setOutsourceStatus] = useState<SubProject['outsourcedStatus']>('Ordered');
+  const [millCertFile, setMillCertFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   // Find Client name or details
   const [clients] = useState(() => {
@@ -339,6 +341,7 @@ export default function ProjectDetails({
     setOutsourceBatch(subProj.outsourcedBatchNo || '');
     setOutsourceCert(subProj.outsourcedCertUrl || '');
     setOutsourceStatus(subProj.outsourcedStatus || 'Ordered');
+    setMillCertFile(null); // Will be replaced if file is uploaded
   };
 
   const handleSaveOutsource = (subIdx: number) => {
@@ -382,6 +385,36 @@ export default function ProjectDetails({
 
     onUpdateProject(updatedProject);
     setEditingOutsourceIndex(null);
+  };
+
+  const handleMillCertUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('millCert', file);
+      formData.append('projectId', project.id);
+      formData.append('subProjectIndex', editingOutsourceIndex?.toString() || '0');
+
+      const response = await fetch('/api/upload-mill-cert', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error('Upload failed');
+
+      const result = await response.json();
+      setMillCertFile(file);
+      setOutsourceCert(result.url);
+      alert(`Mill cert uploaded successfully: ${result.url}`);
+    } catch (error) {
+      console.error('Mill cert upload error:', error);
+      alert('Failed to upload mill cert. Please try again.');
+    } finally {
+      setUploading(false);
+    }
   };
 
   // Overall ISO release and audit certificate generator
@@ -846,14 +879,24 @@ export default function ProjectDetails({
                             </div>
                           </div>
                           <div className="space-y-2">
-                            <label className="block text-[10px] uppercase text-[#6b7280]">Original Material Test Cert URL</label>
-                            <input 
-                              type="text" 
-                              value={outsourceCert}
-                              onChange={e => setOutsourceCert(e.target.value)}
-                              className="w-full bg-black border border-white/10 p-2 text-xs text-white"
-                              placeholder="https://test-certs.pdf"
-                            />
+                            <label className="block text-[10px] uppercase text-[#6b7280]">Original Material Test Cert Upload (ISO 9001 Required)</label>
+                            <div className="flex gap-2 items-center">
+                              <input
+                                type="file"
+                                accept=".pdf,.xlsx,.xls,.doc,.docx"
+                                onChange={handleMillCertUpload}
+                                disabled={uploading}
+                                className="w-full bg-black border border-white/10 p-2 text-xs text-white focus:border-orange-500 outline-none file:mr-2 file:bg-orange-500 file:text-black file:font-bold file:border-0 file:cursor-pointer"
+                              />
+                              {uploading && (
+                                <span className="text-orange-400 text-[10px] uppercase font-bold">Uploading...</span>
+                              )}
+                            </div>
+                            {outsourceCert && !millCertFile && (
+                              <p className="text-[9px] text-gray-500 mt-1">
+                                Current cert: <a href={outsourceCert} target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:underline">View Existing</a>
+                              </p>
+                            )}
                           </div>
                           <div className="space-y-2">
                             <label className="block text-[10px] uppercase text-gray-400">Tracking Status</label>
