@@ -210,9 +210,6 @@ async function seedDatabaseIfEmpty() {
   }
 }
 
-// Ensure database is seeded on startup (must complete before serving requests)
-await seedDatabaseIfEmpty();
-
 // Normalize process names in items and projects to match station names
 async function normalizeProcessNames() {
   try {
@@ -305,7 +302,13 @@ async function normalizeProcessNames() {
   }
 }
 
-await normalizeProcessNames();
+// Ensure database is seeded and process names normalized before serving requests
+async function initialize() {
+  await seedDatabaseIfEmpty();
+  await normalizeProcessNames();
+}
+
+initialize().catch(err => console.error('[Init] Failed:', err));
 
 // REST API Endpoints
 app.get('/api/data', async (req, res) => {
