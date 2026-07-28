@@ -209,6 +209,43 @@ docker compose logs -f iso-tracker | grep -E "UPDATE|BACKUP|MIGRATE|BUILD"
 docker exec iso-tracker cat /app/.container-version
 ```
 
+### Manual full reset (when auto-update is stuck or corrupted)
+
+Use this procedure if the container fails to update, enters a broken state, or you need to force-clean everything:
+
+```bash
+cd E:\Docker\iso-tracker-9001
+
+# 1. Stop and remove container + volumes (destroys local DB copies in volumes)
+docker compose down -v
+
+# 2. Remove the cached image to force fresh build
+docker rmi iso-tracker:latest
+
+# 3. Fetch latest from remote without modifying working tree
+git fetch origin main
+
+# 4. Discard ALL local changes — staged, unstaged, untracked files
+git reset --hard origin/main
+
+# 5. Pull and merge (safe after hard reset)
+git pull --force-with-lease origin main
+
+# 6. Rebuild image from scratch (no cached layers)
+docker compose build --no-cache
+
+# 7. Start fresh container with clean volumes
+docker compose up -d
+```
+
+**When to use:**
+- Container stuck in restart loop after failed update
+- Git merge conflicts blocking auto-update cycle
+- Corrupted node_modules or prisma client state
+- Need to wipe local database copies and start fresh from remote
+
+**Note:** `docker compose down -v` removes named volumes. If you have important data in volumes (not bind mounts), backup first with `docker run --rm -v iso-tracker_prisma:/data -v /tmp:/backup alpine tar czf /backup/prisma.tar.gz -C /data .`
+
 ### Version tracking and backup rotation
 
 - **Version file**: `.container-version` stores the last successfully deployed commit hash. On startup, entrypoint compares this against `origin/main` to detect updates.
