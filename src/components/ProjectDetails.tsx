@@ -255,6 +255,9 @@ export default function ProjectDetails({
     }
   });
 
+  // Load suppliers from clients list (relationType === 'Supplier')
+  const suppliers = clients.filter((c: any) => c.relationType === 'Supplier' || c.relationType === 'Both');
+
   const client = clients.find((c: any) => c.id === project.clientId) || {
     name: 'Unknown Client',
     companyName: 'No Company Details',
@@ -848,13 +851,28 @@ export default function ProjectDetails({
                           <h5 className="text-[10px] uppercase tracking-wider text-brand-orange-500 font-bold">Sub-Contractor Certificate Verification Form</h5>
                           <div className="space-y-2">
                             <label className="block text-[10px] uppercase text-gray-400">Supplier Company</label>
-                            <input 
-                              type="text" 
-                              value={outsourceSupplier}
-                              onChange={e => setOutsourceSupplier(e.target.value)}
-                              className="w-full bg-black border border-white/10 p-2 text-xs text-white"
-                              placeholder="Metro Steel Galvanising Inc."
-                            />
+                            {suppliers.length > 0 ? (
+                              <select 
+                                value={outsourceSupplier}
+                                onChange={e => setOutsourceSupplier(e.target.value)}
+                                className="w-full bg-black border border-white/10 p-2 text-xs text-white"
+                              >
+                                <option value="">Select Supplier or Type New...</option>
+                                {suppliers.map((supplier: any) => (
+                                  <option key={supplier.id} value={supplier.companyName}>
+                                    {supplier.companyName} ({supplier.id})
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input 
+                                type="text" 
+                                value={outsourceSupplier}
+                                onChange={e => setOutsourceSupplier(e.target.value)}
+                                className="w-full bg-black border border-white/10 p-2 text-xs text-white"
+                                placeholder="Metro Steel Galvanising Inc."
+                              />
+                            )}
                           </div>
                           <div className="grid grid-cols-2 gap-2">
                             <div>
