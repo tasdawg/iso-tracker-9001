@@ -61,6 +61,67 @@ export default function SettingsManager({
   const [freshInstallError, setFreshInstallError] = useState('');
   const [isPerformingFreshInstall, setIsPerformingFreshInstall] = useState(false);
 
+  // Database Selection State
+  const [databases, setDatabases] = useState<any[]>([]);
+  const [selectedDatabase, setSelectedDatabase] = useState<string>('dev.db');
+  const [dbSwitchPassword, setDbSwitchPassword] = useState('');
+  const [dbSwitchError, setDbSwitchError] = useState('');
+  const [isSwitchingDatabase, setIsSwitchingDatabase] = useState(false);
+  const [isLoadingDatabases, setIsLoadingDatabases] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/databases')
+      .then(res => res.json())
+      .then(data => {
+        if (data.databases) {
+          setDatabases(data.databases);
+          const currentDb = data.databases.find((db: any) => db.isCurrent);
+          if (currentDb) {
+            setSelectedDatabase(currentDb.name);
+          }
+        }
+      })
+      .catch(err => console.error('[DB] Failed to load databases:', err))
+      .finally(() => setIsLoadingDatabases(false));
+  }, []);
+
+  const handleSwitchDatabase = async () => {
+    if (!dbSwitchPassword) {
+      setDbSwitchError('PASSWORD REQUIRED');
+      return;
+    }
+
+    if (!selectedDatabase || selectedDatabase === 'dev.db') {
+      setDbSwitchError('SELECT A DATABASE TO SWITCH TO');
+      return;
+    }
+
+    setIsSwitchingDatabase(true);
+    setDbSwitchError('');
+
+    try {
+      const response = await fetch('/api/databases/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ databaseName: selectedDatabase, password: dbSwitchPassword })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        alert(`DATABASE SWITCHED:\n\n${data.message}\n\nThe application will now reload with the new database.`);
+        localStorage.clear();
+        window.location.reload();
+      } else {
+        setDbSwitchError(data.error || 'SWITCH FAILED');
+      }
+    } catch (err) {
+      setDbSwitchError('CONNECTION ERROR • CHECK SERVER STATUS');
+    } finally {
+      setIsSwitchingDatabase(false);
+    }
+  };
+
   // Sync local state when parent settings prop changes
   useEffect(() => {
     if (settings) {
@@ -601,6 +662,68 @@ export default function SettingsManager({
             >
               Factory Reset Systems State
             </button>
+
+            <div className="pt-3 border-t border-zinc-800">
+              <h4 className="text-[9px] uppercase font-bold text-orange-500 mb-2 flex items-center gap-1.5">
+                <Database size={11} /> Database Selection
+              </h4>
+              
+              {isLoadingDatabases ? (
+                <p className="text-[9px] text-zinc-600 uppercase py-2">Loading databases...</p>
+              ) : databases.length === 0 ? (
+                <p className="text-[9px] text-zinc-600 uppercase py-2">No databases found in prisma/ directory</p>
+              ) : (
+                <div className="space-y-2">
+                  <select
+                    value={selectedDatabase}
+                    onChange={e => { setSelectedDatabase(e.target.value); setDbSwitchError(''); }}
+                    className="w-full bg-black border border-zinc-800 p-2 text-[10px] text-white uppercase focus:border-orange-500 outline-none"
+                  >
+                    {databases.map(db => (
+                      <option key={db.name} value={db.name}>
+                        {db.name} {db.isCurrent ? '(CURRENT)' : ''} — {(db.size / 1024).toFixed(1)} KB
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="space-y-1">
+                    <label className="block text-[9px] uppercase font-bold text-zinc-500">Authorization Password</label>
+                    <input
+                      type="password"
+                      value={dbSwitchPassword}
+                      onChange={e => { setDbSwitchPassword(e.target.value); setDbSwitchError(''); }}
+                      placeholder="Enter password to confirm..."
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleSwitchDatabase(); }}
+                      className="w-full bg-black border border-zinc-800 p-2 text-[10px] text-white uppercase focus:border-orange-500 outline-none"
+                    />
+                    <p className="text-[8px] text-zinc-600 uppercase">Password hint: "startagain" (case-sensitive)</p>
+                    {dbSwitchError && (
+                      <p className="text-[9px] text-red-400 uppercase font-bold">{dbSwitchError}</p>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={handleSwitchDatabase}
+                    disabled={isSwitchingDatabase || !selectedDatabase || selectedDatabase === 'dev.db'}
+                    className="w-full bg-orange-600 hover:bg-orange-500 text-white font-extrabold px-4 py-2 text-[10px] uppercase tracking-widest transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                  >
+                    {isSwitchingDatabase ? (
+                      <>
+                        <RefreshCw size={11} className="animate-spin" /> Switching Database...
+                      </>
+                    ) : (
+                      <>
+                        <Database size={11} /> Switch to Selected Database
+                      </>
+                    )}
+                  </button>
+
+                  <p className="text-[8px] text-zinc-600 uppercase leading-relaxed">
+                    WARNING: Switching databases will replace the current dev.db. A backup is created automatically before switching. Application reloads with new database.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

@@ -740,6 +740,93 @@ app.delete('/api/station/:id', async (req, res) => {
   }
 });
 
+// List available databases in prisma directory
+app.get('/api/databases', async (req, res) => {
+  try {
+    const prismaDir = path.join(process.cwd(), 'prisma');
+    if (!fs.existsSync(prismaDir)) {
+      return res.json({ databases: [] });
+    }
+
+    const files = fs.readdirSync(prismaDir)
+      .filter(f => f.endsWith('.db') || f.endsWith('.sqlite'))
+      .map(file => {
+        const filePath = path.join(prismaDir, file);
+        const stats = fs.statSync(filePath);
+        return {
+          name: file,
+          size: stats.size,
+          lastModified: stats.mtime.toISOString(),
+          isCurrent: file === 'dev.db' || file === 'database.sqlite'
+        };
+      })
+      .sort((a, b) => b.lastModified.localeCompare(a.lastModified));
+
+    res.json({ databases: files });
+  } catch (error: any) {
+    console.error('[Prisma] Failed to list databases:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Switch database - requires password confirmation
+app.post('/api/databases/switch', async (req, res) => {
+  try {
+    const { databaseName, password } = req.body;
+    
+    // Verify password
+    if (password !== 'startagain') {
+      return res.status(401).json({ error: 'INVALID PASSWORD • ACCESS DENIED' });
+    }
+
+    if (!databaseName) {
+      return res.status(400).json({ error: 'DATABASE NAME REQUIRED' });
+    }
+
+    const prismaDir = path.join(process.cwd(), 'prisma');
+    const dbPath = path.join(prismaDir, databaseName);
+    
+    // Verify file exists and is a valid SQLite database
+    if (!fs.existsSync(dbPath)) {
+      return res.status(404).json({ error: `DATABASE FILE NOT FOUND: ${databaseName}` });
+    }
+
+    if (!databaseName.endsWith('.db') && !databaseName.endsWith('.sqlite')) {
+      return res.status(400).json({ error: 'INVALID DATABASE FILE EXTENSION' });
+    }
+
+    // Backup current database before switching
+    const currentDb = path.join(prismaDir, 'dev.db');
+    if (fs.existsSync(currentDb)) {
+      const backupTimestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
+      const backupFilename = `database-ISO-9001-${backupTimestamp}.bck`;
+      const backupPath = path.join(prismaDir, backupFilename);
+      fs.copyFileSync(currentDb, backupPath);
+      console.log(`[DB Switch] Current database backed up to: ${backupFilename}`);
+    }
+
+    // Copy target database to dev.db (Prisma expects this filename)
+    fs.copyFileSync(dbPath, currentDb);
+    
+    // Enable WAL mode on new database
+    const sqlite3 = require('sqlite3');
+    const db = new sqlite3.Database(currentDb);
+    db.run('PRAGMA journal_mode=WAL', [], () => {
+      db.close();
+    });
+
+    console.log(`[DB Switch] Switched to database: ${databaseName}`);
+    res.json({ 
+      success: true, 
+      message: `Switched to ${databaseName}`,
+      database: databaseName
+    });
+  } catch (error: any) {
+    console.error('[Prisma] Failed to switch database:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Fresh Install with Backup - requires password confirmation
 app.post('/api/fresh-install', async (req, res) => {
   try {
