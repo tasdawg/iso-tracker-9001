@@ -11,6 +11,12 @@ BACKUP_DIR="/app/prisma/backups"
 VERSION_FILE="/app/.container-version"
 SCHEMA_VERSION_FILE="/app/.schema-version"
 MAX_BACKUPS=14
+PRISMA_BIN="./node_modules/.bin/prisma"
+
+# Ensure prisma binary exists (fallback to npx if local install missing)
+if [ ! -f "$PRISMA_BIN" ]; then
+  PRISMA_BIN="npx prisma"
+fi
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
@@ -29,10 +35,10 @@ if [ -f "$DB_PATH" ]; then
   
   # ALWAYS run prisma migrate deploy to ensure all schema changes are applied
   log "[DB] Running prisma migrate deploy to apply all pending migrations..."
-  npx prisma migrate deploy 2>&1 || {
+  $PRISMA_BIN migrate deploy 2>&1 || {
     log "[DB] ERROR: Migration failed! Attempting to recreate database..."
     rm -f "$DB_PATH"
-    npx prisma migrate deploy 2>&1 || {
+    $PRISMA_BIN migrate deploy 2>&1 || {
       log "[DB] FATAL: Cannot create database. Exiting."
       exit 1
     }
@@ -50,7 +56,7 @@ if [ -f "$DB_PATH" ]; then
   if [ -n "$MISSING_TABLES" ]; then
     log "[DB] ERROR: Missing tables after migration:$MISSING_TABLES"
     log "[DB] Attempting to force schema sync..."
-    npx prisma db push 2>&1 || {
+    $PRISMA_BIN db push 2>&1 || {
       log "[DB] FATAL: Cannot sync schema. Exiting."
       exit 1
     }
@@ -65,7 +71,7 @@ if [ -f "$DB_PATH" ]; then
   fi
 else
   log "[DB] No database found — creating fresh database with schema..."
-  npx prisma migrate deploy 2>&1 || {
+  $PRISMA_BIN migrate deploy 2>&1 || {
     log "[DB] ERROR: Schema creation failed!"
     exit 1
   }
@@ -139,7 +145,7 @@ if [ "$FORCE_UPDATE" = "1" ]; then
     exit 1
   }
   
-  npx prisma generate 2>&1 || {
+  $PRISMA_BIN generate 2>&1 || {
     log "[FORCE] ERROR: prisma generate failed. Restoring database and exiting."
     if [ -f "$BACKUP_FILE" ]; then
       cp "$BACKUP_FILE" "$DB_PATH"
@@ -331,7 +337,7 @@ if [ "$NEW_SCHEMA_HASH" != "$STORED_SCHEMA_HASH" ]; then
   # Check if migration directory exists with files
   if ls prisma/migrations/*/migration.sql 1>/dev/null 2>&1; then
     log "[MIGRATE] Running prisma migrate deploy..."
-    if ! npx prisma migrate deploy 2>&1; then
+    if ! $PRISMA_BIN migrate deploy 2>&1; then
       log "[MIGRATE] ERROR: Migration failed! Restoring database from backup..."
       if [ -f "$BACKUP_FILE" ]; then
         cp "$BACKUP_FILE" "$DB_PATH"
@@ -344,7 +350,7 @@ if [ "$NEW_SCHEMA_HASH" != "$STORED_SCHEMA_HASH" ]; then
     log "[MIGRATE] WARNING: No migration files found in prisma/migrations/."
     log "[MIGRATE] Schema.prisma was changed but no formal migrations exist."
     log "[MIGRATE] Prisma will attempt to alter tables directly — this may cause data loss."
-    log "[MIGRATE] For safe migrations, run: npx prisma migrate dev --name <description>"
+    log "[MIGRATE] For safe migrations, run: $PRISMA_BIN migrate dev --name <description>"
     log "[MIGRATE] Continuing anyway..."
   fi
 
@@ -362,7 +368,7 @@ if [ -f package-lock.json ]; then
 fi
 
 # Regenerate Prisma client (required if schema changed)
-npx prisma generate 2>&1 || {
+$PRISMA_BIN generate 2>&1 || {
   log "[BUILD] ERROR: prisma generate failed! Restoring from backup..."
   if [ -f "$BACKUP_FILE" ]; then
     cp "$BACKUP_FILE" "$DB_PATH"

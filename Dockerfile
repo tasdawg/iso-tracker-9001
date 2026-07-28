@@ -32,8 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget git sqlite
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm install multer@^2.2.0 --no-save 2>&1 | tail -5
 
-# Install prisma separately for runtime generate (needs dev dependency)
-RUN npm install prisma@^5.14.0 --save-dev 2>&1 | tail -3
+# Install prisma separately for runtime generate (needs dev dependency) - pinned to exact version
+RUN npm install prisma@5.22.0 @prisma/client@5.22.0 --save-dev 2>&1 | tail -3
 
 # Copy built artifacts from builder stage
 COPY --from=builder /app/dist/ ./dist/
