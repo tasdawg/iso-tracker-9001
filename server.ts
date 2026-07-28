@@ -770,6 +770,35 @@ app.post('/api/fresh-install', async (req, res) => {
     await prisma.station.deleteMany({});
     await prisma.user.deleteMany({});
     
+    // Re-seed default admin and manager users so login is possible after reset
+    console.log('[Fresh Install] Seeding default admin users...');
+    await prisma.user.createMany({
+      data: [
+        { id: 'usr-1', name: 'Robert Vance', role: 'Admin', avatar: 'RV' },
+        { id: 'usr-2', name: 'Amelia Sterling', role: 'Production Manager', avatar: 'AS' },
+        { id: 'usr-3', name: 'Jack Thompson', role: 'Worker', avatar: 'JT' },
+        { id: 'usr-4', name: 'Marcus Brody', role: 'Worker', avatar: 'MB' },
+        { id: 'usr-5', name: 'Liam Rodriguez', role: 'Worker', avatar: 'LR' },
+        { id: 'usr-6', name: 'Chloe Chen', role: 'Worker', avatar: 'CC' },
+        { id: 'usr-7', name: 'Siddharth Nair', role: 'Worker', avatar: 'SN' },
+      ]
+    });
+
+    // Seed default work stations
+    console.log('[Fresh Install] Seeding default work stations...');
+    await prisma.station.createMany({
+      data: [
+        { id: 'stn-1', name: 'Lathe' },
+        { id: 'stn-2', name: 'Milling' },
+        { id: 'stn-3', name: 'Pressbrake' },
+        { id: 'stn-4', name: 'Bandsaw' },
+        { id: 'stn-5', name: 'Finishing/Polishing' },
+        { id: 'stn-6', name: 'Welding/Fabrication' },
+        { id: 'stn-7', name: 'Powder coating' },
+        { id: 'stn-8', name: 'Assembly' },
+      ]
+    });
+    
     // Reset setting to defaults (ncrSeverities will be set via Settings Manager UI)
     await prisma.setting.upsert({
       where: { id: 'global' },
@@ -799,7 +828,7 @@ app.post('/api/fresh-install', async (req, res) => {
       }
     });
 
-    console.log('[Fresh Install] Database reset to factory defaults');
+    console.log('[Fresh Install] Database reset to factory defaults with admin users');
     res.json({ 
       success: true, 
       message: `Fresh install complete. Database backed up as ${backupFilename}`,
