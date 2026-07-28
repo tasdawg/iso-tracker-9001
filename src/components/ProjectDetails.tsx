@@ -851,28 +851,71 @@ export default function ProjectDetails({
                           <h5 className="text-[10px] uppercase tracking-wider text-brand-orange-500 font-bold">Sub-Contractor Certificate Verification Form</h5>
                           <div className="space-y-2">
                             <label className="block text-[10px] uppercase text-gray-400">Supplier Company</label>
-                            {suppliers.length > 0 ? (
-                              <select 
-                                value={outsourceSupplier}
-                                onChange={e => setOutsourceSupplier(e.target.value)}
-                                className="w-full bg-black border border-white/10 p-2 text-xs text-white"
+                            <div className="flex gap-2">
+                              {suppliers.length > 0 ? (
+                                <select 
+                                  value={outsourceSupplier}
+                                  onChange={e => setOutsourceSupplier(e.target.value)}
+                                  className="flex-1 bg-black border border-white/10 p-2 text-xs text-white"
+                                >
+                                  <option value="">Select Supplier or Type New...</option>
+                                  {suppliers.map((supplier: any) => (
+                                    <option key={supplier.id} value={supplier.companyName}>
+                                      {supplier.companyName} ({supplier.id})
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input 
+                                  type="text" 
+                                  value={outsourceSupplier}
+                                  onChange={e => setOutsourceSupplier(e.target.value)}
+                                  className="flex-1 bg-black border border-white/10 p-2 text-xs text-white"
+                                  placeholder="Metro Steel Galvanising Inc."
+                                />
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!outsourceSupplier.trim()) {
+                                    alert('Please enter a supplier company name first.');
+                                    return;
+                                  }
+                                  
+                                  // Create new supplier client
+                                  const nextId = `CLI-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+                                  const newSupplier = {
+                                    id: nextId,
+                                    name: 'Primary Contact',
+                                    companyName: outsourceSupplier.trim(),
+                                    email: '',
+                                    phone: '',
+                                    address: '',
+                                    isoComplianceNotes: 'Standard ISO 9001 regulations and weld criteria tracking apply.',
+                                    relationType: 'Supplier' as const,
+                                    isDeleted: false
+                                  };
+                                  
+                                  // Update localStorage clients
+                                  try {
+                                    const saved = localStorage.getItem('iso_clients_v1');
+                                    const clientsList = saved ? JSON.parse(saved) : [];
+                                    clientsList.push(newSupplier);
+                                    localStorage.setItem('iso_clients_v1', JSON.stringify(clientsList));
+                                    
+                                    // Refresh suppliers list
+                                    setClients([...clients, newSupplier]);
+                                  } catch (e) {
+                                    console.error('Failed to save supplier:', e);
+                                  }
+                                  
+                                  alert(`Supplier "${outsourceSupplier.trim()}" added successfully!`);
+                                }}
+                                className="px-3 py-2 bg-orange-500 hover:bg-orange-400 text-black text-[10px] font-bold uppercase tracking-wider whitespace-nowrap"
                               >
-                                <option value="">Select Supplier or Type New...</option>
-                                {suppliers.map((supplier: any) => (
-                                  <option key={supplier.id} value={supplier.companyName}>
-                                    {supplier.companyName} ({supplier.id})
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <input 
-                                type="text" 
-                                value={outsourceSupplier}
-                                onChange={e => setOutsourceSupplier(e.target.value)}
-                                className="w-full bg-black border border-white/10 p-2 text-xs text-white"
-                                placeholder="Metro Steel Galvanising Inc."
-                              />
-                            )}
+                                + Add Supplier
+                              </button>
+                            </div>
                           </div>
                           <div className="grid grid-cols-2 gap-2">
                             <div>
