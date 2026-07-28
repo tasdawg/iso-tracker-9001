@@ -9,8 +9,6 @@ AGENTS.md
 report.md
 test_write.txt
 metadata.json
-assets/
-src/
 *.log
 .DS_Store
 opencode-plans/
