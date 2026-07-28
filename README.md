@@ -91,7 +91,8 @@ A production-ready Docker Compose setup with **auto-update from GitHub**, **data
 ### Important notes
 
 - **Base image**: Uses `node:20-slim` (Debian) instead of Alpine for Prisma query engine compatibility with OpenSSL 3.
-- **Fresh deployments**: First-time installs skip git operations and seed a fresh database automatically.
+- **Prisma binary targets**: Schema.prisma includes `debian-openssl-3.0.x` in binaryTargets for Debian OpenSSL 3 support.
+- **Fresh deployments**: First-time installs skip git operations; database seeding happens via server.ts on first startup.
 - **Rebuilds**: Use `docker compose build --no-cache` to force complete rebuild without cached layers.
 
 ### Quick start
