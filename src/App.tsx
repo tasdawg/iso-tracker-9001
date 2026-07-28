@@ -750,9 +750,12 @@ export default function App() {
               allItems={items}
               allMaterials={materials}
               allUsers={users}
+              clients={clients}
               currentUser={operator}
               onBack={() => setSelectedProjectForView(null)}
               onUpdateProject={handleUpdateProjectSchema}
+              onUpdateClients={updateClientsState}
+              onAddLog={updateLogsState}
               onViewSimpleCard={() => {
                 setActiveProjectId(selectedProjectForView.id);
                 localStorage.setItem('operator_project_id', selectedProjectForView.id);

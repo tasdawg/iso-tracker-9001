@@ -4,8 +4,8 @@
  */
 
 import React, { useState } from 'react';
-import { Project, Item, Material, User, SubProject, SubProjectProcess } from '../types';
-import { getJoinedDrawings, getItemHierarchy } from '../utils';
+import { Project, Item, Material, User, Client, InventoryLog, SubProject, SubProjectProcess } from '../types';
+import { getJoinedDrawings, getItemHierarchy, generateNextId, generateNextLogId } from '../utils';
 import { 
   ArrowLeft, CheckSquare, Clock, FileText, UserCheck, Settings, 
   ExternalLink, Hammer, ShieldAlert, CheckCircle2, User as UserIcon, HelpCircle, Plus, Info, Upload,
@@ -21,9 +21,12 @@ interface ProjectDetailsProps {
   allItems: Item[];
   allMaterials: Material[];
   allUsers: User[];
+  clients: Client[];
   currentUser: User;
   onBack: () => void;
   onUpdateProject: (updatedProject: Project) => void;
+  onUpdateClients?: (newClients: Client[]) => void;
+  onAddLog?: (log: InventoryLog) => void;
   onViewSimpleCard?: () => void;
 }
 
@@ -75,9 +78,12 @@ export default function ProjectDetails({
   allItems,
   allMaterials,
   allUsers,
+  clients: propsClients,
   currentUser,
   onBack,
   onUpdateProject,
+  onUpdateClients,
+  onAddLog,
   onViewSimpleCard
 }: ProjectDetailsProps) {
   const [activeTab, setActiveTab2] = useState<'overview' | 'processes' | 'drawings' | 'materials' | 'nesting' | 'scheduler' | 'compliance'>('overview');
@@ -254,15 +260,8 @@ export default function ProjectDetails({
   const [newSupplierAddress, setNewSupplierAddress] = useState('');
   const [newSupplierNotes, setNewSupplierNotes] = useState('');
 
-  // Find Client name or details
-  const [clients] = useState(() => {
-    try {
-      const saved = localStorage.getItem('iso_clients_v1');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  // Use clients prop directly (no localStorage dependency)
+  const clients = propsClients;
 
   // Load suppliers from clients list (relationType === 'Supplier')
   const suppliers = clients.filter((c: any) => c.relationType === 'Supplier' || c.relationType === 'Both');
@@ -363,30 +362,32 @@ export default function ProjectDetails({
     subProj.outsourcedSupplierName = outsourceSupplier;
     subProj.outsourcedPoNumber = outsourcePO;
     subProj.outsourcedBatchNo = outsourceBatch;
-    subProj.outsourcedCertUrl = outsourceCert || 'https://iso-certs.company-archive.net/certs/outsourced-conformity.pdf';
+    subProj.outsourcedCertUrl = outsourceCert || '';
     subProj.outsourcedStatus = outsourceStatus;
 
     updatedSubProjects[subIdx] = subProj;
     
     // Add transaction log for external income automatically when updated to Delivered
     if (outsourceStatus === 'Delivered' || outsourceStatus === 'QA Passed') {
-      try {
-        const logs = JSON.parse(localStorage.getItem('iso_logs_v1') || '[]');
-        const newLogLog = {
-          id: 'log-' + Date.now(),
-          type: 'INCOME',
-          date: new Date().toISOString().replace(/\.\d+Z/, ''),
-          materialId: 'outsourced-' + subProj.itemId,
-          materialName: `Outsourced Part: ${(allItems.find(i => i.id === subProj.itemId)?.name) || 'Component'}`,
-          quantity: subProj.qty,
-          batchNo: outsourceBatch || 'TBD-BATCH',
-          poNumber: outsourcePO,
-          userId: currentUser.id,
-          notes: `Received second-supplier outsourced batch completed. Supplier: ${outsourceSupplier}. Checked under ISO-9001.`
-        };
-        localStorage.setItem('iso_logs_v1', JSON.stringify([newLogLog, ...logs]));
-      } catch (e) {
-        console.error(e);
+      const newLog: InventoryLog = {
+        id: generateNextLogId([]),
+        type: 'INCOME',
+        date: new Date().toISOString().replace(/\.\d+Z/, ''),
+        materialId: 'outsourced-' + subProj.itemId,
+        materialName: `Outsourced Part: ${(allItems.find(i => i.id === subProj.itemId)?.name) || 'Component'}`,
+        quantity: subProj.qty,
+        batchNo: outsourceBatch || 'TBD-BATCH',
+        poNumber: outsourcePO,
+        userId: currentUser.id,
+        notes: `Received second-supplier outsourced batch completed. Supplier: ${outsourceSupplier}. Checked under ISO-9001.`,
+        externalPoNo: outsourcePO,
+        externalCertUrl: outsourceCert || ''
+      };
+      
+      if (onAddLog) {
+        onAddLog(newLog);
+      } else {
+        console.error('onAddLog callback not provided — log created in UI only');
       }
     }
 
@@ -447,7 +448,7 @@ export default function ProjectDetails({
       return;
     }
 
-    const nextId = `CLI-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    const nextId = generateNextId('CLI', clients.map((c: any) => c.id));
     const newSupplier = {
       id: nextId,
       name: newSupplierContact.trim(),
@@ -460,17 +461,11 @@ export default function ProjectDetails({
       isDeleted: false
     };
 
-    // Update localStorage clients
-    try {
-      const saved = localStorage.getItem('iso_clients_v1');
-      const clientsList = saved ? JSON.parse(saved) : [];
-      clientsList.push(newSupplier);
-      localStorage.setItem('iso_clients_v1', JSON.stringify(clientsList));
-      
-      // Refresh suppliers list in state
-      setClients([...clients, newSupplier]);
-    } catch (e) {
-      console.error('Failed to save supplier:', e);
+    // Update clients via API sync (persists to both localStorage and database)
+    if (onUpdateClients) {
+      onUpdateClients([...clients, newSupplier]);
+    } else {
+      console.error('onUpdateClients callback not provided — supplier created in UI only');
     }
 
     // Set the supplier name in the outsource form
