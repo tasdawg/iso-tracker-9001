@@ -83,10 +83,16 @@ A production-ready Docker Compose setup with **auto-update from GitHub**, **data
 
 | File | Purpose |
 |------|---------|
-| `Dockerfile` | Multi-stage build (builder → runtime). Final image contains only compiled artifacts + prod deps. |
+| `Dockerfile` | Multi-stage build (builder → runtime) using `node:20-slim` (Debian) for Prisma OpenSSL 3 compatibility. Final image contains only compiled artifacts + prod deps. |
 | `docker-compose.yml` | Service definition with persistent volumes, healthcheck, restart policy, and `iso-tracker_app` network for Cloudflare proxy routing. |
-| `entrypoint.sh` | Startup script: version tracking, git updates, DB backup, migration detection, rebuild. |
+| `entrypoint.sh` | Startup script: fresh deployment detection, version tracking, git updates, DB backup, migration detection, rebuild. |
 | `.dockerignore` | Excludes source/dev files from build context to keep image small. |
+
+### Important notes
+
+- **Base image**: Uses `node:20-slim` (Debian) instead of Alpine for Prisma query engine compatibility with OpenSSL 3.
+- **Fresh deployments**: First-time installs skip git operations and seed a fresh database automatically.
+- **Rebuilds**: Use `docker compose build --no-cache` to force complete rebuild without cached layers.
 
 ### Quick start
 
