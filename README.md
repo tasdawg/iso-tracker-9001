@@ -354,15 +354,22 @@ The **Fresh Database Install** feature (Settings → CRITICAL: Fresh Database In
 
 #### Prisma Version Requirements
 
-- **Minimum:** Prisma 5.22.0+ (fixes SQLite upsert panic on Windows/Node.js v22)
+- **Pinned version:** Prisma 5.22.0 (exact version in package.json and Dockerfile)
+- **Why pinned:** Prisma 7.x introduces breaking changes (P1012 error) incompatible with Node.js 20 and SQLite schema format
 - **Docker runtime:** Uses Debian base image (`node:20-slim`) for OpenSSL 3 compatibility with Prisma query engine
 - **Binary targets:** Schema.prisma includes `debian-openssl-3.0.x` for Docker deployments
 
+**Important:** Do NOT upgrade to Prisma 7.x without migrating schema config to `prisma.config.ts`. The Dockerfile pins exact versions to prevent accidental upgrades during `npm ci`.
+
 ```bash
-# Verify installed version
+# Verify installed version (should be 5.22.0)
 npm list prisma @prisma/client
 
-# Upgrade if needed
-npm install prisma@latest @prisma/client@latest --save-dev
-npx prisma generate
+# DO NOT run this in production — it may upgrade to incompatible 7.x:
+# npm install prisma@latest @prisma/client@latest --save-dev
 ```
+
+**Docker build fix (July 2026):**
+- Dockerfile now installs `prisma@5.22.0 @prisma/client@5.22.0` explicitly (was `^5.14.0`)
+- Entrypoint uses local `./node_modules/.bin/prisma` binary instead of `npx prisma`
+- Prevents npm from resolving to Prisma 7.9.1 which requires Node.js >= 22
