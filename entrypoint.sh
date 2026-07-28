@@ -82,18 +82,28 @@ log "[UPDATE] Tracking repository: $GIT_REPO (branch: ${GIT_BRANCH:-main})"
 # ---- Step 2: Initialize version tracking file if missing ----
 if [ ! -f "$VERSION_FILE" ]; then
   log "[VERSION] No stored version — first run. Initializing..."
-  CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-  echo "$CURRENT_COMMIT" > "$VERSION_FILE"
-fi
-
-STORED_VERSION=$(cat "$VERSION_FILE" 2>/dev/null || echo "")
-
-# ---- Step 3: Fetch latest from remote ----
-# Skip git operations on fresh deployments (container isn't a git repo)
-if echo "$STORED_VERSION" | grep -q "^fresh-deploy-"; then
-  log "[UPDATE] Fresh deployment detected — skipping git operations."
-  log "[UPDATE] Starting server with seeded database."
-  exec node dist/server.cjs
+  
+  # Clone the repo to get current commit hash for tracking
+  if git clone --depth 1 "$GIT_REPO" /tmp/iso-tracker-temp 2>&1; then
+    CURRENT_COMMIT=$(cd /tmp/iso-tracker-temp && git rev-parse HEAD)
+    rm -rf /tmp/iso-tracker-temp
+    echo "$CURRENT_COMMIT" > "$VERSION_FILE"
+    log "[VERSION] Initialized with commit: $CURRENT_COMMIT"
+  else
+    # If clone fails, mark as fresh deployment and skip git operations
+    echo "fresh-deploy-$(date +%s)" > "$VERSION_FILE"
+    log "[VERSION] Fresh deployment — git unavailable. Starting server."
+    exec node dist/server.cjs
+  fi
+else
+  STORED_VERSION=$(cat "$VERSION_FILE" 2>/dev/null || echo "")
+  
+  # Skip git operations on fresh deployments (container isn't a git repo)
+  if echo "$STORED_VERSION" | grep -q "^fresh-deploy-"; then
+    log "[UPDATE] Fresh deployment detected — skipping git operations."
+    log "[UPDATE] Starting server with seeded database."
+    exec node dist/server.cjs
+  fi
 fi
 
 log "[UPDATE] Fetching latest from $GIT_REPO $GIT_BRANCH..."
@@ -183,7 +193,7 @@ else
   log "[MIGRATE] Schema unchanged. Skipping migration."
 fi
 
-# ---- Step 6d: Rebuild application ----
+# ---- Step 6d: Rebuild application (always rebuild on update) ----
 log "[BUILD] Rebuilding application..."
 
 # Reinstall production dependencies (catches package.json changes)
@@ -200,7 +210,7 @@ npx prisma generate 2>&1 || {
   exit 1
 }
 
-# Rebuild frontend + bundle server
+# Rebuild frontend + bundle server (ALWAYS rebuild when code changes)
 npm run build 2>&1 || {
   log "[BUILD] ERROR: Build failed! Restoring from backup..."
   if [ -f "$BACKUP_FILE" ]; then
