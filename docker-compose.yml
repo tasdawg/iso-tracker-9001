@@ -11,8 +11,7 @@ services:
       - uploads-data:/app/uploads
     environment:
       - NODE_ENV=production
-      # GitHub repo to track for updates (CHANGE THIS to your actual repo URL)
-      - GIT_REPO=https://github.com/YOUR_USERNAME/iso-tracker.git
+      - GIT_REPO=https://github.com/tasdawg/iso-tracker-9001.git
       - GIT_BRANCH=main
       # Prisma database URL pointing at the volume mount
       - PRISMA_DATABASE_URL=file:/app/prisma/dev.db?connection_limit=1&timeout=30000&journal_mode=WAL
