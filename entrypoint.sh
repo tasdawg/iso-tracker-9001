@@ -32,14 +32,31 @@ log "[UPDATE] Tracking repository: $GIT_REPO (branch: ${GIT_BRANCH:-main})"
 
 # ---- Step 2: Initialize version tracking file if missing ----
 if [ ! -f "$VERSION_FILE" ]; then
-  log "[VERSION] No stored version — first run. Initializing..."
-  CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-  echo "$CURRENT_COMMIT" > "$VERSION_FILE"
+  log "[VERSION] No stored version — first deployment."
+  
+  # Check if database exists and has data
+  if [ -f "$DB_PATH" ] && [ "$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM sqlite_master WHERE type='table';" 2>/dev/null)" -gt 0 ]; then
+    log "[VERSION] Existing database found — treating as update deployment."
+    # Try to get the commit hash from git if available, otherwise use timestamp
+    CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "deploy-$(date +%Y%m%d%H%M%S)")
+    echo "$CURRENT_COMMIT" > "$VERSION_FILE"
+  else
+    log "[VERSION] No existing database — fresh deployment. Database will be seeded on first server start."
+    # Use a placeholder that forces update check on next restart
+    echo "fresh-deploy-$(date +%Y%m%d%H%M%S)" > "$VERSION_FILE"
+  fi
 fi
 
 STORED_VERSION=$(cat "$VERSION_FILE" 2>/dev/null || echo "")
 
 # ---- Step 3: Fetch latest from remote ----
+# Skip git operations on fresh deployments (container isn't a git repo)
+if echo "$STORED_VERSION" | grep -q "^fresh-deploy-"; then
+  log "[UPDATE] Fresh deployment detected — skipping git operations."
+  log "[UPDATE] Starting server with seeded database."
+  exec node dist/server.cjs
+fi
+
 log "[UPDATE] Fetching latest from $GIT_REPO $GIT_BRANCH..."
 if ! git fetch origin "${GIT_BRANCH:-main}" 2>&1; then
   log "[UPDATE] WARNING: git fetch failed (network issue or repo unreachable)."
