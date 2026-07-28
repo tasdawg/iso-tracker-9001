@@ -7,13 +7,14 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - db-data:/app/prisma
-      - uploads-data:/app/uploads
+      # Bind mounts for direct host access (persistent edits on drive)
+      - ./prisma:/app/prisma
+      - ./uploads:/app/uploads
     environment:
       - NODE_ENV=production
       - GIT_REPO=https://github.com/tasdawg/iso-tracker-9001.git
       - GIT_BRANCH=main
-      # Prisma database URL pointing at the volume mount
+      # Prisma database URL pointing at bind mount
       - PRISMA_DATABASE_URL=file:/app/prisma/dev.db?connection_limit=1&timeout=30000&journal_mode=WAL
     networks:
       - iso-tracker_app
@@ -32,9 +33,3 @@ networks:
   iso-tracker_app:
     name: iso-tracker_app
     driver: bridge
-
-volumes:
-  db-data:
-    name: iso-tracker-db-data
-  uploads-data:
-    name: iso-tracker-uploads-data
