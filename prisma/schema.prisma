@@ -17,6 +17,7 @@ model Client {
   address            String
   isoComplianceNotes String
   relationType       String
+  millCertUrl        String? // Link to supplier material certificate (ISO 9001 require)
 }
 
 model Material {

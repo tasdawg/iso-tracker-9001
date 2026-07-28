@@ -101,6 +101,48 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   });
 });
 
+// Upload mill cert for supplier client
+app.post('/api/upload-mill-cert', upload.single('millCert'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  
+  const { clientId } = req.body;
+  if (!clientId) {
+    return res.status(400).json({ error: 'Client ID required' });
+  }
+  
+  const filePath = `/uploads/${req.file.filename}`;
+  
+  try {
+    // Update client with mill cert URL
+    await prisma.client.upsert({
+      where: { id: clientId },
+      update: { millCertUrl: filePath },
+      create: { 
+        id: clientId,
+        millCertUrl: filePath,
+        name: 'Unknown',
+        companyName: 'Unknown Company',
+        email: '',
+        phone: '',
+        address: '',
+        isoComplianceNotes: ''
+      }
+    });
+    
+    res.json({
+      success: true,
+      url: filePath,
+      filename: req.file.filename,
+      originalName: req.file.originalname
+    });
+  } catch (error) {
+    console.error('[Upload] Mill cert upload error:', error);
+    res.status(500).json({ error: 'Failed to save mill cert' });
+  }
+});
+
 // Ensure Setting record exists (seed on first run)
 async function ensureSettingRecord() {
   try {

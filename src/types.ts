@@ -21,6 +21,7 @@ export interface Client {
   address: string;
   isoComplianceNotes: string;
   relationType?: 'Client' | 'Supplier' | 'Both'; // Distinguished role
+  millCertUrl?: string; // Link to supplier material certificate (ISO 9001 require)
   isDeleted?: boolean; // Soft delete hook
 }
 

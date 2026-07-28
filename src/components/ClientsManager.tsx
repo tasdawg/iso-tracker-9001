@@ -24,6 +24,8 @@ export default function ClientsManager({
   const [address, setAddress] = useState('');
   const [isoComplianceNotes, setIsoComplianceNotes] = useState('');
   const [relationType, setRelationType] = useState<'Client' | 'Supplier' | 'Both'>('Client');
+  const [millCertFile, setMillCertFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   // Filter out soft-deleted clients
   const activeClients = clients.filter(c => !c.isDeleted);
@@ -53,6 +55,7 @@ export default function ClientsManager({
     setAddress('');
     setIsoComplianceNotes('');
     setRelationType('Client');
+    setMillCertFile(null);
     setShowAddForm(true);
   };
 
@@ -65,7 +68,36 @@ export default function ClientsManager({
     setAddress(client.address);
     setIsoComplianceNotes(client.isoComplianceNotes);
     setRelationType(client.relationType || 'Client');
+    setMillCertFile(null); // Will be replaced if file is uploaded
     setShowAddForm(true);
+  };
+
+  const handleMillCertUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('millCert', file);
+      formData.append('clientId', editingClient?.id || 'new');
+
+      const response = await fetch('/api/upload-mill-cert', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error('Upload failed');
+
+      const result = await response.json();
+      setMillCertFile(file);
+      alert(`Mill cert uploaded successfully: ${result.url}`);
+    } catch (error) {
+      console.error('Mill cert upload error:', error);
+      alert('Failed to upload mill cert. Please try again.');
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleSoftDelete = (id: string, company: string) => {
@@ -82,6 +114,9 @@ export default function ClientsManager({
       return;
     }
 
+    // Get mill cert URL from file or existing client
+    const millCertUrl = editingClient?.millCertUrl || '';
+
     if (editingClient) {
       // Edit mode
       const updated = clients.map(c => c.id === editingClient.id ? {
@@ -92,7 +127,8 @@ export default function ClientsManager({
         phone,
         address,
         isoComplianceNotes: isoComplianceNotes || 'Standard ISO 9001 regulations and weld criteria tracking apply.',
-        relationType
+        relationType,
+        millCertUrl
       } : c);
       onUpdateClients(updated);
     } else {
@@ -107,6 +143,7 @@ export default function ClientsManager({
         address,
         isoComplianceNotes: isoComplianceNotes || 'Standard ISO 9001 regulations and weld criteria tracking apply.',
         relationType,
+        millCertUrl,
         isDeleted: false
       };
       onUpdateClients([...clients, newClient]);
@@ -280,6 +317,31 @@ export default function ClientsManager({
                     onChange={e => setIsoComplianceNotes(e.target.value)}
                   />
                 </div>
+
+                {relationType === 'Supplier' && (
+                  <div className="space-y-1 col-span-2">
+                    <label className="block text-[9px] uppercase font-bold text-zinc-500">
+                      Supplier Mill Certificate Upload (ISO 9001 Required)
+                    </label>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="file"
+                        accept=".pdf,.xlsx,.xls,.doc,.docx"
+                        onChange={handleMillCertUpload}
+                        disabled={uploading}
+                        className="w-full bg-black border border-zinc-800 p-2 text-xs focus:border-orange-500 outline-none file:mr-2 file:bg-orange-500 file:text-black file:font-bold file:border-0 file:cursor-pointer"
+                      />
+                      {uploading && (
+                        <span className="text-orange-400 text-[10px] uppercase font-bold">Uploading...</span>
+                      )}
+                    </div>
+                    {editingClient?.millCertUrl && !millCertFile && (
+                      <p className="text-[9px] text-zinc-500 mt-1">
+                        Current cert: <a href={editingClient.millCertUrl} target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:underline">View Existing</a>
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-2 pt-4 border-t border-zinc-800">
@@ -313,6 +375,7 @@ export default function ClientsManager({
               <th className="py-2.5 px-2">Primary Officer Contact</th>
               <th className="py-2.5 px-2">FOB Logistics Location</th>
               <th className="py-2.5 px-2">Audit Compliance Specs</th>
+              <th className="py-2.5 px-2">Mill Certificate</th>
               <th className="py-2.5 px-3 text-right">Operations</th>
             </tr>
           </thead>
@@ -358,6 +421,20 @@ export default function ClientsManager({
                       <span>{client.isoComplianceNotes}</span>
                     </div>
                   </td>
+                  {relType === 'Supplier' && client.millCertUrl && (
+                    <td className="py-3 px-2">
+                      <a 
+                        href={client.millCertUrl} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-[10px] text-orange-400 hover:text-orange-300 hover:underline font-mono uppercase"
+                        title="View supplier mill certificate"
+                      >
+                        <Star size={11} className="inline mr-1" />
+                        Mill Cert
+                      </a>
+                    </td>
+                  )}
                   <td className="py-3 px-3 text-right">
                     <div className="flex justify-end gap-1.5">
                       <button
@@ -382,7 +459,7 @@ export default function ClientsManager({
 
             {filteredClients.length === 0 && (
               <tr>
-                <td colSpan={7} className="text-center py-12 text-zinc-500 font-sans text-xs">
+                <td colSpan={8} className="text-center py-12 text-zinc-500 font-sans text-xs">
                   NO ENTERPRISES OR SUPPLIER AGENCIES MATCH THE FILTER SPECIFICATION
                 </td>
               </tr>
