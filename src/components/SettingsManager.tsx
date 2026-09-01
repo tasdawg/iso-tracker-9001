@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Database, Sliders, AlertCircle, RefreshCw, Layers, CheckCircle, UserPlus, Edit2, Trash2, X, Save, HardHat, Plus } from 'lucide-react';
+import { ShieldCheck, Database, AlertCircle, RefreshCw, Layers, CheckCircle, UserPlus, Edit2, Trash2, X, Save, HardHat, Plus } from 'lucide-react';
 
 interface SettingsManagerProps {
   onClearDatabase: () => void;
@@ -34,11 +34,10 @@ export default function SettingsManager({
   const [stampCode, setStampCode] = useState(settings?.stampCode || 'STAMP-9001-2026');
   const [facilityLocation, setFacilityLocation] = useState(settings?.facilityLocation || 'Melbourne Fabrication Hub Bay 4');
   
-  // SaaS parameters - initialized from props or defaults
-  const [saasTier, setSaasTier] = useState<'Enterprise' | 'Professional' | 'Standard'>(settings?.saasTier || 'Enterprise');
-  const [concurrentSeats, setConcurrentSeats] = useState(settings?.concurrentSeats || 25);
-  const [autoSaves, setAutoSaves] = useState(settings?.autoSaves !== undefined ? settings.autoSaves : true);
-  const [syncFreq, setSyncFreq] = useState(settings?.syncFreq || 'Real-time Transaction Lock');
+  // Auto-save behavior - read from persisted settings (no longer toggleable in UI)
+  const autoSaves = settings?.autoSaves !== undefined ? settings.autoSaves : true;
+
+  // Public URL for resolving uploaded file links
   const [publicUrl, setPublicUrl] = useState(settings?.publicUrl || '');
 
   // NCR Severity Levels - initialized from props or defaults
@@ -129,10 +128,6 @@ export default function SettingsManager({
       setAccreditationBody(settings.accreditationBody || 'Lloyds Register Quality Assurance (LRQA)');
       setStampCode(settings.stampCode || 'STAMP-9001-2026');
       setFacilityLocation(settings.facilityLocation || 'Melbourne Fabrication Hub Bay 4');
-      setSaasTier(settings.saasTier || 'Enterprise');
-      setConcurrentSeats(settings.concurrentSeats || 25);
-      setAutoSaves(settings.autoSaves !== undefined ? settings.autoSaves : true);
-      setSyncFreq(settings.syncFreq || 'Real-time Transaction Lock');
       setPublicUrl(settings.publicUrl || '');
 
       if (settings.ncrSeverities) {
@@ -211,17 +206,14 @@ export default function SettingsManager({
           accreditationBody,
           stampCode,
           facilityLocation,
-          saasTier,
-          concurrentSeats,
           autoSaves,
-          syncFreq,
           publicUrl,
           ncrSeverities: JSON.stringify(ncrSeverities)
         });
       }, 500); // Debounce saves by 500ms
       return () => clearTimeout(timeoutId);
     }
-  }, [companyName, accreditationBody, stampCode, facilityLocation, saasTier, concurrentSeats, autoSaves, syncFreq, publicUrl, ncrSeverities]);
+  }, [companyName, accreditationBody, stampCode, facilityLocation, publicUrl, ncrSeverities]);
 
   // User Management Functions
   const handleAddUser = async () => {
@@ -453,10 +445,7 @@ export default function SettingsManager({
       accreditationBody,
       stampCode,
       facilityLocation,
-      saasTier,
-      concurrentSeats,
       autoSaves,
-      syncFreq,
       publicUrl,
       ncrSeverities: JSON.stringify(ncrSeverities)
     });
@@ -476,19 +465,19 @@ export default function SettingsManager({
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-white/10">
         <div>
           <span className="text-[10px] uppercase tracking-[0.45em] text-orange-500 font-bold block mb-1">
-            ISO-9001 COMMAND CONFIG & SAAS DECK
+            ISO-9001 COMMAND CONFIG
           </span>
           <h2 className="font-sans font-black text-2xl md:text-3xl text-white tracking-widest uppercase">
             Facility Settings Configuration
           </h2>
           <p className="text-xs text-slate-400 mt-1 uppercase font-semibold">
-            Track registrar certifications, company metadata stamps, and active software-as-a-service configurations.
+            Track registrar certifications and company metadata stamps.
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
         {/* ISO 9001 Quality Stamp Setup */}
         <div className="p-5 bg-zinc-950 border border-zinc-800 space-y-4">
           <h3 className="text-xs uppercase tracking-widest font-black text-orange-500 pb-2 border-b border-white/5 flex items-center gap-1.5">
@@ -539,69 +528,6 @@ export default function SettingsManager({
                   value={facilityLocation}
                   onChange={e => setFacilityLocation(e.target.value)}
                 />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* SaaS & Subscriptions Deck */}
-        <div className="p-5 bg-zinc-950 border border-zinc-800 space-y-4">
-          <h3 className="text-xs uppercase tracking-widest font-black text-orange-500 pb-2 border-b border-white/5 flex items-center gap-1.5">
-            <Sliders size={14} /> SaaS Subscription Desk
-          </h3>
-
-          <p className="text-[10px] text-zinc-400 leading-relaxed uppercase">
-            Manage concurrent facility license counts, server-side persistence schedules, and active multi-user limits.
-          </p>
-
-          <div className="space-y-3 pt-2 text-xs">
-            <div className="space-y-1">
-              <label className="block text-[9px] uppercase font-bold text-zinc-500">SaaS Premium Subscription Tier</label>
-              <select
-                className="w-full bg-black border border-zinc-800 p-2.5 text-xs text-white uppercase focus:border-orange-500 outline-none"
-                value={saasTier}
-                onChange={e => setSaasTier(e.target.value as any)}
-              >
-                <option value="Enterprise">Enterprise Elite Accreditations</option>
-                <option value="Professional">Professional Multi-Site</option>
-                <option value="Standard">Standard Workshop</option>
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-[9px] uppercase font-bold text-zinc-500">Concurrent Terminal Seats Limit</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="5"
-                  max="100"
-                  className="flex-grow accent-orange-500 bg-black h-2 rounded-lg"
-                  value={concurrentSeats}
-                  onChange={e => setConcurrentSeats(parseInt(e.target.value, 10))}
-                />
-                <span className="font-bold text-orange-500 bg-black px-2.5 py-1 border border-zinc-800 shrink-0 text-[10px]">
-                  {concurrentSeats} Workstations
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-[9px] uppercase font-bold text-zinc-500">Auto Save State Sync</label>
-              <div className="flex items-center gap-4 bg-black p-2 border border-zinc-800 justify-between">
-                <span className="text-[10px] text-zinc-400 uppercase">Sync logs immediately on status check-off</span>
-                <input
-                  type="checkbox"
-                  checked={autoSaves}
-                  onChange={e => setAutoSaves(e.target.checked)}
-                  className="w-4 h-4 accent-orange-500 bg-black border-zinc-800"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-[9px] uppercase font-bold text-zinc-500">Database Engine State</label>
-              <div className="bg-black border border-zinc-800 p-2 flex justify-between items-center text-[10px] text-green-400 font-bold uppercase">
-                <span>ONLINE - {syncFreq}</span>
               </div>
             </div>
 
