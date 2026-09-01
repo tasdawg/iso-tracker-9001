@@ -34,9 +34,6 @@ export default function SettingsManager({
   const [stampCode, setStampCode] = useState(settings?.stampCode || 'STAMP-9001-2026');
   const [facilityLocation, setFacilityLocation] = useState(settings?.facilityLocation || 'Melbourne Fabrication Hub Bay 4');
   
-  // Auto-save behavior - read from persisted settings (no longer toggleable in UI)
-  const autoSaves = settings?.autoSaves !== undefined ? settings.autoSaves : true;
-
   // Public URL for resolving uploaded file links
   const [publicUrl, setPublicUrl] = useState(settings?.publicUrl || '');
 
@@ -196,24 +193,30 @@ export default function SettingsManager({
     }
   };
 
-  // Auto-save settings whenever any value changes
-  useEffect(() => {
-    if (autoSaves) {
-      const timeoutId = setTimeout(() => {
-        onSaveSettings({
-          id: 'app_settings',
-          companyName,
-          accreditationBody,
-          stampCode,
-          facilityLocation,
-          autoSaves,
-          publicUrl,
-          ncrSeverities: JSON.stringify(ncrSeverities)
-        });
-      }, 500); // Debounce saves by 500ms
-      return () => clearTimeout(timeoutId);
-    }
-  }, [companyName, accreditationBody, stampCode, facilityLocation, publicUrl, ncrSeverities]);
+  // Explicit settings persistence - no auto-save. Settings only hit the database
+  // when the user presses an Apply/Save button (or adds/removes a severity level).
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [settingsApplied, setSettingsApplied] = useState(false);
+
+  const buildSettingsPayload = (nextSeverities?: string[]) => ({
+    id: 'app_settings',
+    companyName,
+    accreditationBody,
+    stampCode,
+    facilityLocation,
+    publicUrl,
+    ncrSeverities: JSON.stringify(nextSeverities !== undefined ? nextSeverities : ncrSeverities)
+  });
+
+  const applySettings = (nextSeverities?: string[]) => {
+    setIsSavingSettings(true);
+    onSaveSettings(buildSettingsPayload(nextSeverities));
+    setSettingsApplied(true);
+    setTimeout(() => {
+      setIsSavingSettings(false);
+      setSettingsApplied(false);
+    }, 2000);
+  };
 
   // User Management Functions
   const handleAddUser = async () => {
@@ -390,15 +393,20 @@ export default function SettingsManager({
 
   // NCR Severity Management Functions
   const handleAddSeverity = () => {
-    if (newSeverity.trim() && !ncrSeverities.includes(newSeverity.trim())) {
-      setNcrSeverities([...ncrSeverities, newSeverity.trim()]);
+    const value = newSeverity.trim();
+    if (value && !ncrSeverities.includes(value)) {
+      const updated = [...ncrSeverities, value];
+      setNcrSeverities(updated);
       setNewSeverity('');
+      applySettings(updated);
     }
   };
 
   const handleRemoveSeverity = (severity: string) => {
     if (confirm(`Remove "${severity}" from NCR severity levels?`)) {
-      setNcrSeverities(ncrSeverities.filter(s => s !== severity));
+      const updated = ncrSeverities.filter(s => s !== severity);
+      setNcrSeverities(updated);
+      applySettings(updated);
     }
   };
 
@@ -439,16 +447,7 @@ export default function SettingsManager({
     setSyncLog(prev => [...prev, `[Manual Audit] Triggering active database sync state...`]);
     
     // Force save current settings immediately
-    onSaveSettings({
-      id: 'app_settings',
-      companyName,
-      accreditationBody,
-      stampCode,
-      facilityLocation,
-      autoSaves,
-      publicUrl,
-      ncrSeverities: JSON.stringify(ncrSeverities)
-    });
+    onSaveSettings(buildSettingsPayload());
     
     setTimeout(() => {
       setIsSyncing(false);
@@ -544,6 +543,27 @@ export default function SettingsManager({
                 External URL used to resolve uploaded file links. Leave blank for relative paths (localhost/dev). Required for Cloudflare proxy deployments so drawings and certificates render correctly.
               </p>
             </div>
+
+            <button
+              onClick={() => applySettings()}
+              disabled={isSavingSettings}
+              className={`w-full font-extrabold px-4 py-2 text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 ${
+                settingsApplied
+                  ? 'bg-green-950/60 border border-green-800 text-green-400 cursor-default'
+                  : isSavingSettings
+                    ? 'bg-orange-500/70 text-black cursor-wait'
+                    : 'bg-orange-500 hover:bg-orange-400 text-black'
+              }`}
+            >
+              {settingsApplied ? (
+                <CheckCircle size={12} />
+              ) : isSavingSettings ? (
+                <RefreshCw size={12} className="animate-spin" />
+              ) : (
+                <Save size={12} />
+              )}
+              {settingsApplied ? 'Applied to database' : isSavingSettings ? 'Applying changes...' : 'Apply Settings'}
+            </button>
           </div>
         </div>
 
