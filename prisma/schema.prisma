@@ -50,6 +50,7 @@ model Item {
   cutList      String // Serialized JSON of CutListItem[]
   processes    String // Serialized JSON of ProcessTemplate[]
   drawings     String // Serialized JSON of Drawing[]
+  laserCutParts String @default("[]") // Serialized JSON of LaserCutPart[]
   subItems     String // Serialized JSON of SubItemRelation[]
   dateCreated  String
   createdBy    String

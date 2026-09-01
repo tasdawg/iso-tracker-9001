@@ -753,9 +753,14 @@ export default function App() {
               clients={clients}
               currentUser={operator}
               onBack={() => setSelectedProjectForView(null)}
-              onUpdateProject={handleUpdateProjectSchema}
-              onUpdateClients={updateClientsState}
-              onAddLog={updateLogsState}
+               onUpdateProject={handleUpdateProjectSchema}
+               onUpdateClients={updateClientsState}
+               allLogs={logs}
+               onAddLog={(newLog) => {
+                 const updatedLogs = [newLog, ...logs];
+                 setLogs(updatedLogs);
+                 persistState(projects, materials, items, clients, updatedLogs);
+               }}
               onViewSimpleCard={() => {
                 setActiveProjectId(selectedProjectForView.id);
                 localStorage.setItem('operator_project_id', selectedProjectForView.id);

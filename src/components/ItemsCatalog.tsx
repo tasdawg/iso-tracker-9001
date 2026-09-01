@@ -4,9 +4,9 @@
  */
 
 import React, { useState } from 'react';
-import { Item, Material, Drawing, ProcessTemplate, CutListItem, SubItemRelation, Station } from '../types';
+import { Item, Material, Drawing, ProcessTemplate, CutListItem, SubItemRelation, Station, LaserCutPart } from '../types';
 import { generateNextItemId, resolveFileUrl } from '../utils';
-import { Search, Plus, Trash2, ShieldAlert, FileText, Share2, Layers, CheckSquare, PlusCircle, Paperclip, ExternalLink } from 'lucide-react';
+import { Search, Plus, Trash2, ShieldAlert, FileText, Share2, Layers, CheckSquare, PlusCircle, Paperclip, ExternalLink, ChevronDown, ChevronUp, Workflow, Edit2, Zap } from 'lucide-react';
 
 interface ItemsCatalogProps {
   items: Item[];
@@ -28,6 +28,8 @@ export default function ItemsCatalog({
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedItemForDetails, setSelectedItemForDetails] = useState<Item | null>(null);
+  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [testQuantity, setTestQuantity] = useState<number>(1);
 
   const getFullMaterialRequirements = (item: Item): { materialId: string; name: string; qtyNeeded: number }[] => {
@@ -164,7 +166,9 @@ export default function ItemsCatalog({
     qty: number;
   }[]>([]);
   // Drawings
-  const [drawingsReq, setDrawingsReq] = useState<{ name: string; fileType: 'DXF' | 'PDF' | 'DWG'; fileSize: string; designVersion: string }[]>([]);
+  const [drawingsReq, setDrawingsReq] = useState<{ name: string; fileType: 'DXF' | 'PDF' | 'DWG'; fileSize: string; designVersion: string; filePath?: string }[]>([]);
+  // Laser cut parts (flat sheet parts that are just laser cutting, each with its own DXF / drawing file)
+  const [laserPartsReq, setLaserPartsReq] = useState<{ description: string; drawingName: string; fileType: 'DXF' | 'PDF' | 'DWG'; fileSize: string; designVersion: string; filePath?: string }[]>([]);
   // Nested child sub-items
   const [subItemsReq, setSubItemsReq] = useState<{ childItemId: string; qty: number }[]>([]);
 
@@ -268,8 +272,56 @@ export default function ItemsCatalog({
     }
   };
 
+  const handleAddLaserPart = () => {
+    setLaserPartsReq([...laserPartsReq, { description: '', drawingName: '', fileType: 'DXF' as 'DXF' | 'PDF' | 'DWG', fileSize: '', designVersion: '', filePath: undefined }]);
+  };
+  const handleRemoveLaserPart = (idx: number) => {
+    setLaserPartsReq(laserPartsReq.filter((_, i) => i !== idx));
+  };
+  const handleLaserFieldChange = (idx: number, field: keyof typeof laserPartsReq[0], val: any) => {
+    const updated = [...laserPartsReq];
+    (updated[idx] as any)[field] = val;
+    setLaserPartsReq(updated);
+  };
+
+  // Upload the laser part CAD file to server and populate metadata
+  const handleUploadLaserPartFile = async (idx: number, file: File) => {
+    if (!file) return;
+
+    const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    let fileType: 'DXF' | 'PDF' | 'DWG' = 'DXF';
+    if (ext === '.pdf') fileType = 'PDF';
+    else if (ext === '.dwg') fileType = 'DWG';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const result = await res.json();
+
+      if (!result.success) {
+        alert(result.error || 'Upload failed');
+        return;
+      }
+
+      const updated = [...laserPartsReq];
+      updated[idx] = {
+        ...updated[idx],
+        drawingName: file.name,
+        fileType,
+        fileSize: result.fileSize,
+        filePath: result.filePath
+      };
+      setLaserPartsReq(updated);
+    } catch (err) {
+      alert('Upload failed. Please try again.');
+      console.error(err);
+    }
+  };
+
   const handleAddSubItem = () => {
-    const availChildren = items.filter(i => i.id !== selectedItemForDetails?.id);
+    const availChildren = items.filter(i => i.id !== selectedItemForDetails?.id && i.id !== editingItemId);
     if (availChildren.length > 0) {
       setSubItemsReq([...subItemsReq, { childItemId: availChildren[0].id, qty: 1 }]);
     }
@@ -284,7 +336,47 @@ export default function ItemsCatalog({
     setSubItemsReq(updated);
   };
 
-  // Submit new template
+  // Reset all blueprint form fields to a blank state
+  const resetItemForm = () => {
+    setName('');
+    setItemCode('');
+    setDescription('');
+    setMaterialsReq([]);
+    setRowSupplierFilters({});
+    setProcessesReq([]);
+    setCutListReq([]);
+    setDrawingsReq([]);
+    setLaserPartsReq([]);
+    setSubItemsReq([]);
+    setNewPresetVal('');
+  };
+
+  // Pre-populate the blueprint form from an existing item record (loaded from database) and enter edit mode
+  const handleEditItem = (item: Item) => {
+    setEditingItemId(item.id);
+    setName(item.name);
+    setItemCode(item.itemCode);
+    setDescription(item.description);
+
+    setMaterialsReq((item.materials || []).map(m => ({ materialId: m.materialId, qty: m.qtyNeeded })));
+    const filters: Record<number, string> = {};
+    (item.materials || []).forEach((m, idx) => {
+      const foundMat = allMaterials.find(mat => mat.id === m.materialId);
+      if (foundMat) filters[idx] = foundMat.supplier;
+    });
+    setRowSupplierFilters(filters);
+
+    setProcessesReq((item.processes || []).map(p => ({ name: p.name, estimatedHours: p.estimatedHours })));
+    setCutListReq((item.cutList || []).map(c => ({ type: c.type, description: c.description, size: c.size, lengthMm: c.lengthMm, qty: c.qty })));
+    setDrawingsReq((item.drawings || []).map(d => ({ name: d.name, fileType: d.fileType, fileSize: d.fileSize, designVersion: d.designVersion, filePath: d.filePath })));
+    setLaserPartsReq((item.laserCutParts || []).map(lp => ({ description: lp.description, drawingName: lp.drawingName, fileType: lp.fileType, fileSize: lp.fileSize, designVersion: lp.designVersion || '', filePath: lp.filePath })));
+    setSubItemsReq((item.subItems || []).map(s => ({ childItemId: s.childItemId, qty: s.qty })));
+
+    setSelectedItemForDetails(null);
+    setShowAddForm(true);
+  };
+
+  // Submit blueprint form — creates a new template or updates the existing one when in edit mode
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !itemCode || !description) {
@@ -292,9 +384,7 @@ export default function ItemsCatalog({
       return;
     }
 
-    const newItemId = generateNextItemId(items);
-    
-    // Assemble structured Item
+    // Assemble structured fields
     const compileProcesses: ProcessTemplate[] = processesReq.map((p, idx) => ({
       name: p.name,
       estimatedHours: p.estimatedHours,
@@ -307,42 +397,78 @@ export default function ItemsCatalog({
       qtyNeeded: mr.qty
     }));
 
-    const compileDrawings: Drawing[] = drawingsReq.filter(dr => dr.name).map(dr => ({
-      name: dr.name,
-      fileType: dr.fileType,
-      fileSize: dr.fileSize,
-      uploadDate: new Date().toISOString().split('T')[0],
-      uploadedBy: currentUser.name,
-      designVersion: dr.designVersion,
-      filePath: dr.filePath
-    }));
+    // Preserve original upload audit trail for drawings that already exist on the item being edited
+    const originalItem = editingItemId ? items.find(i => i.id === editingItemId) : null;
+    const compileDrawings: Drawing[] = drawingsReq.filter(dr => dr.name).map(dr => {
+      const existingDwg = originalItem?.drawings?.find(d => d.name === dr.name && (!dr.filePath || d.filePath === dr.filePath));
+      return {
+        name: dr.name,
+        fileType: dr.fileType,
+        fileSize: dr.fileSize,
+        uploadDate: existingDwg?.uploadDate || new Date().toISOString().split('T')[0],
+        uploadedBy: existingDwg?.uploadedBy || currentUser.name,
+        designVersion: dr.designVersion,
+        filePath: dr.filePath
+      };
+    });
 
-    const newItem: Item = {
-      id: newItemId,
-      name,
-      itemCode: itemCode.toUpperCase(),
-      description,
-      materials: compileMaterials,
-      cutList: cutListReq,
-      processes: compileProcesses,
-      drawings: compileDrawings,
-      subItems: subItemsReq,
-      dateCreated: new Date().toISOString().split('T')[0],
-      createdBy: currentUser.name
-    };
+    // Preserve original upload audit trail for laser cut parts that already exist on the item being edited
+    const compileLaserParts: LaserCutPart[] = laserPartsReq.filter(lp => lp.description || lp.drawingName).map(lp => {
+      const existingLp = originalItem?.laserCutParts?.find(x =>
+        (lp.drawingName && x.drawingName === lp.drawingName) || (!lp.drawingName && x.description === lp.description)
+      );
+      return {
+        description: lp.description,
+        drawingName: lp.drawingName,
+        fileType: lp.fileType,
+        fileSize: lp.fileSize,
+        uploadDate: existingLp?.uploadDate || new Date().toISOString().split('T')[0],
+        uploadedBy: existingLp?.uploadedBy || currentUser.name,
+        designVersion: lp.designVersion,
+        filePath: lp.filePath
+      };
+    });
 
-    onUpdateItems([...items, newItem]);
-    
-    // Reset forms
+    if (editingItemId) {
+      // Update the existing item in place — keep original ID, creation date and author for traceability
+      const updatedItems = items.map(i => i.id === editingItemId ? {
+        ...i,
+        name,
+        itemCode: itemCode.toUpperCase(),
+        description,
+        materials: compileMaterials,
+        cutList: cutListReq,
+        processes: compileProcesses,
+        drawings: compileDrawings,
+        laserCutParts: compileLaserParts,
+        subItems: subItemsReq
+      } : i);
+      onUpdateItems(updatedItems);
+    } else {
+      const newItemId = generateNextItemId(items);
+
+      const newItem: Item = {
+        id: newItemId,
+        name,
+        itemCode: itemCode.toUpperCase(),
+        description,
+        materials: compileMaterials,
+        cutList: cutListReq,
+        processes: compileProcesses,
+        drawings: compileDrawings,
+        laserCutParts: compileLaserParts,
+        subItems: subItemsReq,
+        dateCreated: new Date().toISOString().split('T')[0],
+        createdBy: currentUser.name
+      };
+
+      onUpdateItems([...items, newItem]);
+    }
+
+    // Reset forms and exit edit mode
     setShowAddForm(false);
-    setName('');
-    setItemCode('');
-    setDescription('');
-    setMaterialsReq([]);
-    setProcessesReq([]);
-    setCutListReq([]);
-    setDrawingsReq([]);
-    setSubItemsReq([]);
+    setEditingItemId(null);
+    resetItemForm();
   };
 
   const handleDeleteItemTemplate = (id: string, name: string) => {
@@ -378,26 +504,32 @@ export default function ItemsCatalog({
             CAD Assembly Templates
           </h2>
           <p className="text-sm text-gray-400 mt-1">
-            Manufactured blueprints index. Design nested assemblies, specify metal mill requirements, write CAD cut-lists and mount DXF files.
+            Manufactured blueprints index. Design nested assemblies, specify metal mill requirements, register laser cut parts with their DXF nest files and mount CAD drawings.
           </p>
         </div>
 
         <button
           onClick={() => {
             setSelectedItemForDetails(null);
+            resetItemForm();
+            setEditingItemId(null);
             setShowAddForm(!showAddForm);
           }}
           className="bg-brand-orange-500 hover:bg-brand-orange-400 text-black py-3 px-6 text-xs uppercase font-bold tracking-widest rounded-none transition-colors"
         >
-          {showAddForm ? 'View Catalog Database' : 'Design New Component Blueprint'}
+          {showAddForm ? (editingItemId ? 'Cancel Edit & View Catalog' : 'View Catalog Database') : 'Design New Component Blueprint'}
         </button>
       </div>
 
       {showAddForm ? (
         <div className="max-w-4xl mx-auto bg-[#1a1a1a] p-8 md:p-10 border border-brand-orange-500/30 text-white space-y-8">
           <div className="pb-4 border-b border-white/5">
-            <h3 className="font-serif text-xl font-bold">Standard Assembly Blueprint Modeler</h3>
-            <p className="text-xs text-gray-400 mt-1">Write production instructions and link CAD files to create a traceable component template.</p>
+            <h3 className="font-serif text-xl font-bold">{editingItemId ? 'Edit Component Blueprint' : 'Standard Assembly Blueprint Modeler'}</h3>
+            <p className="text-xs text-gray-400 mt-1">
+              {editingItemId
+                ? `Modifying existing template ${itemCode}. Changes save back to the catalog database on compile.`
+                : 'Write production instructions and link CAD files to create a traceable component template.'}
+            </p>
           </div>
 
           <form onSubmit={handleFormSubmit} className="space-y-8">
@@ -465,7 +597,7 @@ export default function ItemsCatalog({
                         onChange={e => handleSubItemFieldChange(idx, 'childItemId', e.target.value)}
                         className="flex-1 bg-black border border-white/10 p-3 text-xs text-white"
                       >
-                        {items.map(i => (
+                        {items.filter(i => i.id !== editingItemId).map(i => (
                           <option key={i.id} value={i.id}>{i.name} ({i.itemCode})</option>
                         ))}
                       </select>
@@ -650,6 +782,67 @@ export default function ItemsCatalog({
                 </div>
               ) : (
                 <p className="text-[11px] text-gray-500 text-center py-2">No custom cut-lists registered.</p>
+              )}
+            </div>
+
+            {/* LASER CUT PARTS & DXF NEST FILES */}
+            <div className="bg-black p-6 border border-white/5 space-y-4">
+              <div className="flex justify-between items-center pb-2 border-b border-white/5">
+                <h4 className="text-xs uppercase tracking-widest font-bold text-brand-orange-500 flex items-center gap-1.5">
+                  <Zap size={14} /> Laser Cut Parts &amp; DXF Nest Files
+                </h4>
+                <button
+                  type="button"
+                  onClick={handleAddLaserPart}
+                  className="text-[10px] text-brand-orange-400 hover:underline uppercase font-bold tracking-wider"
+                >
+                  + Add Laser Part
+                </button>
+              </div>
+
+              {laserPartsReq.length > 0 ? (
+                <div className="space-y-2">
+                  {laserPartsReq.map((row, idx) => (
+                    <div key={idx} className="grid grid-cols-1 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_96px_40px] gap-2 bg-[#090909] p-3 border border-white/5 items-center">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[9px] text-gray-500 uppercase font-bold">CAD / DXF File</label>
+                        <input
+                          type="file"
+                          accept=".dxf,.pdf,.dwg"
+                          onChange={e => handleUploadLaserPartFile(idx, e.target.files?.[0] || null)}
+                          className="text-[10px] text-white file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-bold file:bg-orange-600 file:text-black hover:file:bg-orange-500 cursor-pointer bg-black border border-white/10 p-1"
+                        />
+                        {row.drawingName && (
+                          <p className="text-[9px] text-gray-400 truncate font-mono">{row.drawingName} ({row.fileSize})</p>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[9px] text-gray-500 uppercase font-bold">Part Description (short)</label>
+                        <input
+                          type="text"
+                          placeholder='e.g. "Door hinge bracket plate, 3mm"'
+                          value={row.description}
+                          onChange={e => handleLaserFieldChange(idx, 'description', e.target.value)}
+                          className="bg-black border border-white/10 p-2 text-xs text-white"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[9px] text-gray-500 uppercase font-bold">Revision</label>
+                        <input
+                          type="text"
+                          value={row.designVersion}
+                          onChange={e => handleLaserFieldChange(idx, 'designVersion', e.target.value)}
+                          className="bg-black border border-white/10 p-2 text-xs text-center font-mono text-white"
+                        />
+                      </div>
+                      <button type="button" onClick={() => handleRemoveLaserPart(idx)} className="text-red-500 hover:text-red-400 p-2 self-end">
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[11px] text-gray-500 text-center py-2">No laser cut parts attached. Register flat sheet DXF work here when the item is just a laser cut with no other routing.</p>
               )}
             </div>
 
@@ -844,7 +1037,11 @@ export default function ItemsCatalog({
             <div className="flex justify-end gap-3 pt-6 border-t border-white/5">
               <button
                 type="button"
-                onClick={() => setShowAddForm(false)}
+                onClick={() => {
+                  setEditingItemId(null);
+                  resetItemForm();
+                  setShowAddForm(false);
+                }}
                 className="bg-black border border-white/10 uppercase tracking-widest text-[10px] px-6 py-3 hover:text-white"
               >
                 Discard Form
@@ -853,7 +1050,7 @@ export default function ItemsCatalog({
                 type="submit"
                 className="bg-brand-orange-500 hover:bg-brand-orange-400 text-black uppercase tracking-widest text-[10px] font-bold px-8 py-3"
               >
-                Compile Part Blueprint Model
+                {editingItemId ? 'Save Changes to Blueprint' : 'Compile Part Blueprint Model'}
               </button>
             </div>
           </form>
@@ -876,12 +1073,20 @@ export default function ItemsCatalog({
               </p>
             </div>
 
-            <button
-              onClick={() => handleDeleteItemTemplate(selectedItemForDetails.id, selectedItemForDetails.name)}
-              className="border border-red-500/20 text-red-500 hover:bg-red-500 hover:text-black py-2 px-4 uppercase text-xs tracking-wider"
-            >
-              Purge catalog Item
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleEditItem(selectedItemForDetails)}
+                className="border border-zinc-700 text-zinc-300 hover:border-brand-orange-500 hover:text-brand-orange-400 py-2 px-4 uppercase text-xs tracking-wider flex items-center gap-1.5"
+              >
+                <Edit2 size={13} /> Edit Blueprint
+              </button>
+              <button
+                onClick={() => handleDeleteItemTemplate(selectedItemForDetails.id, selectedItemForDetails.name)}
+                className="border border-red-500/20 text-red-500 hover:bg-red-500 hover:text-black py-2 px-4 uppercase text-xs tracking-wider"
+              >
+                Purge catalog Item
+              </button>
+            </div>
           </div>
 
           <p className="text-sm text-gray-300 leading-relaxed font-sans">{selectedItemForDetails.description}</p>
@@ -981,6 +1186,52 @@ export default function ItemsCatalog({
                 <div className="text-center py-6 text-xs text-gray-500 font-sans">No drawing attachments located.</div>
               )}
             </div>
+
+            {/* Laser cut parts & DXF nest files */}
+            {selectedItemForDetails.laserCutParts && selectedItemForDetails.laserCutParts.length > 0 && (
+              <div className="p-6 bg-black border border-lime-500/20 space-y-4 lg:col-span-2">
+                <h4 className="text-xs uppercase tracking-[0.2em] font-bold text-lime-400 pb-2 border-b border-white/10 flex justify-between items-center">
+                  <span>Laser Cut Parts &amp; DXF Nest Files</span>
+                  <Zap size={14} />
+                </h4>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {selectedItemForDetails.laserCutParts.map((lp, lpIdx) => (
+                    <div key={lpIdx} className="p-4 bg-[#0a0a0a] border border-white/10 font-mono text-xs flex flex-col justify-between gap-3">
+                      <div>
+                        <div className="font-bold text-white truncate" title={lp.description}>{lp.description || lp.drawingName}</div>
+                        {lp.drawingName && (
+                          <div className="text-[10px] text-gray-500 mt-1 uppercase font-sans">
+                            File: <strong className="text-white normal-case">{lp.drawingName}</strong> &bull; {lp.fileType} file{lp.fileSize ? ` &bull; Size: ${lp.fileSize}` : ''}{lp.designVersion ? ` &bull; ver: <strong className="text-brand-orange-400">{lp.designVersion}</strong>` : ''}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex justify-between items-center pt-2 border-t border-white/5">
+                        {lp.filePath ? (
+                          <a
+                            href={resolveFileUrl(lp.filePath, settings?.publicUrl || '')}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[10px] text-brand-orange-500 hover:text-brand-orange-400 font-bold uppercase tracking-wider flex items-center gap-1 transition-colors"
+                          >
+                            View File <ExternalLink size={12} />
+                          </a>
+                        ) : (
+                          <span className="text-[10px] text-gray-600 italic">No file uploaded</span>
+                        )}
+                        <span className={`text-[10px] px-2.5 py-1 uppercase font-bold font-sans ${
+                          lp.filePath
+                            ? 'text-green-400 bg-green-500/10 border border-green-500/20'
+                            : 'text-[#D9823B] bg-brand-orange-500/10 border border-[#C8620A]/20'
+                        }`}>
+                          {lp.filePath ? 'UPLOADED' : 'ATTACHED'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* CONSTITUENT PARTS & SUB-ASSEMBLIES (PARTS THAT LIVE INSIDE THE ITEM) */}
             {selectedItemForDetails.subItems && selectedItemForDetails.subItems.length > 0 && (
@@ -1178,81 +1429,332 @@ export default function ItemsCatalog({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredItems.map((item) => {
-              const checkRes = checkItemStockStatus(item, item.id === 'ITM-CAM-1011' ? 50 : 1);
-              return (
-                <div key={item.id} className="p-6 bg-[#1a1a1a] border border-white/10 hover:border-brand-orange-500/50 transition-all flex flex-col justify-between space-y-4 rounded-none">
-                  
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs font-mono font-bold bg-[#0d0d0d] text-brand-orange-500 border border-brand-orange-500/20 px-2 py-0.5">
-                        {item.itemCode}
-                      </span>
-                      <span className="text-[10px] text-gray-500 font-mono uppercase">
-                        Drafted {item.dateCreated}
-                      </span>
-                    </div>
+          {/* HIGH-DENSITY ITEMS TABLE */}
+          <div className="overflow-x-auto bg-black border-[0.5px] border-[#2222225c]">
+            <table className="w-full text-left text-xs font-mono border-collapse min-w-[900px]">
+              <thead>
+                <tr className="border-b border-zinc-800 text-zinc-500 uppercase tracking-widest text-[9px] bg-zinc-950">
+                  <th className="py-2.5 px-3 font-bold text-zinc-500">Exp</th>
+                  <th className="py-2.5 px-2 font-bold text-zinc-500">Item Code</th>
+                  <th className="py-2.5 px-2">Assembly Name</th>
+                  <th className="py-2.5 px-2 text-center">Drafted</th>
+                  <th className="py-2.5 px-2 text-center">Routing Seqs</th>
+                  <th className="py-2.5 px-2 text-center">CAD Files</th>
+                  <th className="py-2.5 px-2 text-center">Laser Cuts</th>
+                  <th className="py-2.5 px-2 text-center">Sub-Parts</th>
+                  <th className="py-2.5 px-2 text-center">Materials / Cuts</th>
+                  <th className="py-2.5 px-2 text-center">Stock Status</th>
+                  <th className="py-2.5 px-3 text-right">Rapid Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredItems.map((item) => {
+                  const checkRes = checkItemStockStatus(item, item.id === 'ITM-CAM-1011' ? 50 : 1);
+                  const isExpanded = expandedItemId === item.id;
 
-                    {/* Stock Warning Status Flag badge */}
-                    <div className="py-1">
-                      {checkRes.overallStatus === 'CRITICAL_MISSING' ? (
-                        <span className="text-[9px] font-black uppercase tracking-wider px-2 py-1 border border-red-500 text-red-500 bg-red-500/5 block text-center font-mono">
-                          🚫 PO REQUIRED - MISSING PARTS
-                        </span>
-                      ) : checkRes.overallStatus === 'ORDER_NEEDED' ? (
-                        <span className="text-[9px] font-black uppercase tracking-wider px-2 py-1 border border-amber-500 text-amber-500 bg-amber-500/5 block text-center font-mono animate-pulse">
-                          ⚠️ TO BE ORDERED {item.id === 'ITM-CAM-1011' ? '(Qty 50 Run Short)' : '(Shorfall)'}
-                        </span>
-                      ) : (
-                        <span className="text-[9px] font-black uppercase tracking-wider px-2 py-1 border border-green-500 text-green-500 bg-green-500/5 block text-center font-mono">
-                          ✅ RAW STOCK SECURED & READY
-                        </span>
+                  return (
+                    <React.Fragment key={item.id}>
+                      <tr className={`border-b border-zinc-900 hover:bg-zinc-900/30 transition-all ${isExpanded ? 'bg-orange-500/5' : 'text-zinc-300'}`}>
+                        <td className="py-3 px-3">
+                          <button
+                            onClick={() => setExpandedItemId(isExpanded ? null : item.id)}
+                            className="text-zinc-500 hover:text-orange-500 p-0.5 cursor-pointer focus:outline-none"
+                          >
+                            {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          </button>
+                        </td>
+                        <td className="py-3 px-2">
+                          <button
+                            onClick={() => setSelectedItemForDetails(item)}
+                            className="font-extrabold text-orange-500 hover:text-orange-400 tracking-wider text-[11px] underline cursor-pointer focus:outline-none bg-transparent"
+                          >
+                            {item.itemCode}
+                          </button>
+                        </td>
+                        <td className="py-3 px-2 font-sans font-extrabold text-white uppercase text-[13px]">
+                          <span>{item.name}</span>
+                          <span className="block text-[9px] text-zinc-500 uppercase font-mono mt-0.5">{item.id} &bull; by {item.createdBy}</span>
+                        </td>
+                        <td className="py-3 px-2 text-center text-[10px] font-sans font-bold text-zinc-400">
+                          {item.dateCreated}
+                        </td>
+                        <td className="py-3 px-2 text-center">
+                          <span className="text-[10px] font-bold text-zinc-300">{(item.processes || []).length}</span>
+                        </td>
+                        <td className="py-3 px-2 text-center">
+                          <span className="text-[10px] font-bold text-orange-500">{(item.drawings || []).length}</span>
+                        </td>
+                        <td className="py-3 px-2 text-center">
+                          {(item.laserCutParts || []).length > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-lime-400" title={`${(item.laserCutParts || []).length} laser cut part(s) with DXF / drawing files`}>
+                              <Zap size={11} /> {(item.laserCutParts || []).length}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-zinc-600">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-2 text-center">
+                          <span className={`text-[10px] font-bold ${(item.subItems || []).length > 0 ? 'text-cyan-400' : 'text-zinc-600'}`}>
+                            {(item.subItems || []).length}
+                          </span>
+                        </td>
+                        <td className="py-3 px-2 text-center">
+                          <span className="text-[10px] font-bold text-zinc-300">{(item.materials || []).length} mat(s)</span>
+                          <span className="block text-[8px] text-zinc-600 uppercase mt-0.5">{(item.cutList || []).length} cut line(s)</span>
+                        </td>
+                        <td className="py-3 px-2 text-center">
+                          {checkRes.overallStatus === 'CRITICAL_MISSING' ? (
+                            <span className="inline-block text-[9px] uppercase tracking-widest font-black text-red-500 border border-red-500/40 bg-red-500/5 px-1.5 py-0.5">PO Required</span>
+                          ) : checkRes.overallStatus === 'ORDER_NEEDED' ? (
+                            <span className="inline-block text-[9px] uppercase tracking-widest font-black text-amber-500 border border-amber-500/40 bg-amber-500/5 px-1.5 py-0.5 animate-pulse">To Be Ordered</span>
+                          ) : (
+                            <span className="inline-block text-[9px] uppercase tracking-widest font-black text-emerald-400 border border-emerald-500/30 bg-emerald-500/5 px-1.5 py-0.5">Stock Secured</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          <div className="flex justify-end gap-1.5 items-center">
+                            <button
+                              onClick={() => {
+                                setTestQuantity(item.id === 'ITM-CAM-1011' ? 50 : 1);
+                                setSelectedItemForDetails(item);
+                              }}
+                              className="bg-black hover:bg-orange-500/10 border-[0.5px] border-[#2222225c] hover:border-orange-500 text-zinc-400 hover:text-orange-500 py-1 px-2 text-[9px] uppercase tracking-wider font-bold transition-all cursor-pointer"
+                              title="Review blueprint CAD info"
+                            >
+                              Review Blueprint
+                            </button>
+                            <button
+                              onClick={() => handleEditItem(item)}
+                              className="p-1 bg-zinc-950 hover:bg-orange-500/10 hover:text-orange-500 text-zinc-400 border-[0.5px] border-[#2222225c] transition-all cursor-pointer"
+                              title="Edit item blueprint"
+                            >
+                              <Edit2 size={11} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteItemTemplate(item.id, item.name)}
+                              className="p-1 bg-zinc-950 hover:bg-red-950 hover:text-red-400 text-zinc-500 border-[0.5px] border-[#2222225c] transition-all cursor-pointer"
+                              title="Delete item"
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* INLINE ROW EXPANDER - DETAILED BOM, ROUTING & CAD (DROP-DOWN DETAIL) */}
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan={11} className="bg-zinc-950/50 p-4 border-b-[0.5px] border-b-[#2222225c]">
+                            <div className="space-y-3 font-sans max-w-6xl mx-auto">
+                              <div className="flex justify-between items-center pb-1.5 border-b border-zinc-900">
+                                <div>
+                                  <h4 className="text-xs text-orange-500 uppercase font-black tracking-widest font-mono">
+                                    Nested BOM, Routing Sequences &amp; CAD Detail — {item.itemCode}
+                                  </h4>
+                                  <p className="text-[10px] text-zinc-500 uppercase mt-0.5 font-mono">
+                                    Template configuration for {item.name}. Drafted by {item.createdBy}.
+                                  </p>
+                                </div>
+                              </div>
+
+                              <p className="text-[11px] text-zinc-400 leading-relaxed">{item.description}</p>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {/* Bill of materials & stock check */}
+                                <div className="p-3 bg-black border border-zinc-900 space-y-2">
+                                  <h5 className="text-[10px] uppercase tracking-widest font-bold text-orange-500 flex items-center gap-1.5 pb-1.5 border-b border-zinc-900">
+                                    <Layers size={12} /> ISO 9001 Bill of Materials &amp; Stock Check
+                                  </h5>
+                                  {checkRes.components.length > 0 ? (
+                                    <div className="space-y-1 text-[10px] font-mono">
+                                      {checkRes.components.map((c, idx) => (
+                                        <div key={idx} className="flex justify-between items-center p-1.5 hover:bg-zinc-950 transition-colors border-b border-zinc-900/30 gap-2">
+                                          <span className="leading-tight text-zinc-400 flex items-start gap-2 font-sans font-bold uppercase min-w-[110px]">
+                                            <span>{c.name}</span>
+                                            <span className="text-[8px] text-zinc-600 font-mono normal-case shrink-0">{c.id}</span>
+                                          </span>
+                                          <div className="flex items-center gap-2.5 justify-end min-w-[190px]">
+                                            <span className="text-zinc-500">Ava: {c.available} {c.unit}</span>
+                                            <span className="text-zinc-500">Req: {c.required.toFixed(1)} {c.unit}</span>
+                                            {c.status === 'MISSING' ? (
+                                              <span className="px-1.5 py-0.5 text-[8px] font-black tracking-wider uppercase border border-red-500/40 text-red-500 bg-red-500/5 shrink-0">Missing</span>
+                                            ) : c.shortfall > 0 ? (
+                                              <span className="px-1.5 py-0.5 text-[8px] font-black tracking-wider uppercase border border-amber-500/40 text-amber-500 bg-amber-500/5 shrink-0">Short -{c.shortfall.toFixed(1)}</span>
+                                            ) : (
+                                              <span className="px-1.5 py-0.5 text-[8px] font-black tracking-wider uppercase border border-emerald-500/30 text-emerald-400 bg-emerald-500/5 shrink-0">Stock OK</span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-[10px] text-zinc-600 font-mono py-2 text-center uppercase">No raw materials listed for this template.</p>
+                                  )}
+                                </div>
+
+                                {/* Fabrication routing sequences */}
+                                <div className="p-3 bg-black border border-zinc-900 space-y-2">
+                                  <h5 className="text-[10px] uppercase tracking-widest font-bold text-orange-500 flex items-center gap-1.5 pb-1.5 border-b border-zinc-900">
+                                    <Workflow size={12} /> Fabrication Routing Sequences
+                                  </h5>
+                                  {(item.processes || []).length > 0 ? (
+                                    <div className="space-y-1 text-[10px] font-mono">
+                                      {item.processes.map((proc, pIdx) => (
+                                        <div key={pIdx} className="flex justify-between items-center p-1.5 hover:bg-zinc-950 transition-colors border-b border-zinc-900/30 gap-2">
+                                          <span className="leading-none text-zinc-400 flex items-center gap-2 font-sans font-bold uppercase min-w-[120px]">
+                                            <span className="text-zinc-600 w-5 text-right shrink-0">#{proc.sequence}</span>
+                                            <span>{proc.name}</span>
+                                          </span>
+                                          <span className="text-orange-400 shrink-0">{proc.estimatedHours} Hrs Est</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-[10px] text-zinc-600 font-mono py-2 text-center uppercase">No routing sheet sequences found.</p>
+                                  )}
+                                </div>
+
+                                {/* CAD cut-sheets */}
+                                <div className="p-3 bg-black border border-zinc-900 space-y-2">
+                                  <h5 className="text-[10px] uppercase tracking-widest font-bold text-orange-500 flex items-center gap-1.5 pb-1.5 border-b border-zinc-900">
+                                    <FileText size={12} /> CAD Cut-Sheets (Physical dimensions)
+                                  </h5>
+                                  {(item.cutList || []).length > 0 ? (
+                                    <div className="space-y-1 text-[10px] font-mono">
+                                      {item.cutList.map((cut, cIdx) => (
+                                        <div key={cIdx} className="flex justify-between items-center p-1.5 hover:bg-zinc-950 transition-colors border-b border-zinc-900/30 gap-2">
+                                          <span className="leading-tight text-white font-sans font-bold uppercase truncate" title={cut.description}>{cut.description}</span>
+                                          <div className="flex items-center gap-2.5 justify-end shrink-0 text-zinc-500">
+                                            <span>{cut.type} &bull; {cut.size}</span>
+                                            <span className="text-orange-400">{cut.lengthMm} mm</span>
+                                            <span>x{cut.qty}</span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-[10px] text-zinc-600 font-mono py-2 text-center uppercase">No specific cut sheet lines for this item.</p>
+                                  )}
+                                </div>
+
+                                {/* Attached blueprint drawings */}
+                                <div className="p-3 bg-black border border-zinc-900 space-y-2">
+                                  <h5 className="text-[10px] uppercase tracking-widest font-bold text-orange-500 flex items-center gap-1.5 pb-1.5 border-b border-zinc-900">
+                                    <Paperclip size={12} /> Attached Blueprint Drawings
+                                  </h5>
+                                  {(item.drawings || []).length > 0 ? (
+                                    <div className="space-y-1 text-[10px] font-mono">
+                                      {item.drawings.map((draw, dIdx) => (
+                                        <div key={dIdx} className="flex justify-between items-center p-1.5 hover:bg-zinc-950 transition-colors border-b border-zinc-900/30 gap-2">
+                                          <span className="leading-tight text-white font-sans font-bold truncate" title={draw.name}>{draw.name}</span>
+                                          <div className="flex items-center gap-2.5 justify-end shrink-0">
+                                            <span className="text-zinc-500">{draw.fileType} &bull; Ver {draw.designVersion || '—'}</span>
+                                            {draw.filePath ? (
+                                              <a
+                                                href={resolveFileUrl(draw.filePath, settings?.publicUrl || '')}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="text-orange-500 hover:text-orange-400 font-bold uppercase flex items-center gap-1 shrink-0 transition-colors"
+                                              >
+                                                View File <ExternalLink size={10} />
+                                              </a>
+                                            ) : (
+                                              <span className="text-zinc-600 italic shrink-0">Attached</span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-[10px] text-zinc-600 font-mono py-2 text-center uppercase">No drawing attachments located.</p>
+                                  )}
+                                </div>
+
+                                {/* Laser cut parts & DXF nest files */}
+                                {(item.laserCutParts || []).length > 0 && (
+                                  <div className="p-3 bg-black border border-zinc-900 space-y-2">
+                                    <h5 className="text-[10px] uppercase tracking-widest font-bold text-lime-400 flex items-center gap-1.5 pb-1.5 border-b border-zinc-900">
+                                      <Zap size={12} /> Laser Cut Parts &amp; DXF Files ({item.laserCutParts!.length})
+                                    </h5>
+                                    <div className="space-y-1 text-[10px] font-mono">
+                                      {item.laserCutParts!.map((lp, lpIdx) => (
+                                        <div key={lpIdx} className="flex justify-between items-center p-1.5 hover:bg-zinc-950 transition-colors border-b border-zinc-900/30 gap-2">
+                                          <span className="leading-tight text-white font-sans font-bold truncate" title={lp.description}>{lp.description || lp.drawingName}</span>
+                                          <div className="flex items-center gap-2.5 justify-end shrink-0 min-w-[180px]">
+                                            {lp.drawingName && (
+                                              <span className="text-zinc-500 truncate max-w-[160px]" title={lp.drawingName}>{lp.drawingName}</span>
+                                            )}
+                                            {lp.filePath ? (
+                                              <a
+                                                href={resolveFileUrl(lp.filePath, settings?.publicUrl || '')}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="text-orange-500 hover:text-orange-400 font-bold uppercase flex items-center gap-1 shrink-0 transition-colors"
+                                              >
+                                                View File <ExternalLink size={10} />
+                                              </a>
+                                            ) : (
+                                              <span className="text-zinc-600 italic shrink-0">No file</span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Constituent parts hierarchy */}
+                              {(item.subItems || []).length > 0 && (
+                                <div className="p-3 bg-black border border-orange-500/20 space-y-2">
+                                  <h5 className="text-[10px] uppercase tracking-widest font-bold text-orange-500 flex items-center gap-1.5 pb-1.5 border-b border-zinc-900">
+                                    <Layers size={12} /> Constituent Parts Hierarchy ({item.subItems.length} Parts Included)
+                                  </h5>
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                    {item.subItems.map((sub, sIdx) => {
+                                      const child = items.find(itm => itm.id === sub.childItemId);
+                                      if (!child) return null;
+                                      return (
+                                        <div key={sIdx} className="p-2.5 bg-zinc-950 border border-zinc-900 flex justify-between items-center gap-3">
+                                          <div className="min-w-0">
+                                            <span className="text-[9px] font-mono text-orange-500 font-extrabold uppercase tracking-wide">{child.itemCode}</span>
+                                            <p className="text-[11px] font-sans font-black text-white uppercase truncate leading-tight mt-0.5">
+                                              {child.name} &bull; Qty {sub.qty} Pcs
+                                            </p>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setTestQuantity(sub.qty);
+                                              setSelectedItemForDetails(child);
+                                            }}
+                                            className="shrink-0 bg-zinc-900 hover:bg-orange-500/10 border border-zinc-800 hover:border-orange-500/40 text-zinc-400 hover:text-orange-400 font-mono text-[8px] uppercase font-bold px-2.5 py-1.5 transition-all cursor-pointer"
+                                          >
+                                            Details &amp; CAD
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
                       )}
-                    </div>
+                    </React.Fragment>
+                  );
+                })}
 
-                    <h3 className="text-lg font-serif font-black tracking-tight text-white mb-1 line-clamp-2">
-                      {item.name}
-                    </h3>
-                    
-                    <p className="text-xs text-gray-400 font-sans font-light line-clamp-2 leading-relaxed">
-                      {item.description}
-                    </p>
-                  </div>
-
-                  <div className="pt-4 border-t border-white/5 flex justify-between items-center text-[10px] uppercase font-mono text-gray-400">
-                    <span>Routing sequences: <strong className="text-white">{item.processes.length}</strong></span>
-                    <span>Attached CADs: <strong className="text-brand-orange-500">{item.drawings.length}</strong></span>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => {
-                        setTestQuantity(item.id === 'ITM-CAM-1011' ? 50 : 1);
-                        setSelectedItemForDetails(item);
-                      }}
-                      className="flex-1 bg-black border border-brand-orange-500 hover:bg-brand-orange-500 hover:text-black text-brand-orange-500 text-[10px] font-bold uppercase tracking-widest py-3 rounded-none transition-all"
-                    >
-                      Review Blueprint cad Info
-                    </button>
-                    <button
-                      onClick={() => handleDeleteItemTemplate(item.id, item.name)}
-                      className="text-gray-500 hover:text-red-500 p-2.5 transition-colors border border-white/5 hover:border-red-500/20"
-                      title="Delete item"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-
-                </div>
-              );
-            })}
-
-            {filteredItems.length === 0 && (
-              <div className="col-span-3 text-center py-12 bg-[#1a1a1a] border border-dashed border-white/10 text-gray-500 font-mono text-xs">
-                No custom assemblies discovered in catalog index. Initialize one using design specs above.
-              </div>
-            )}
+                {filteredItems.length === 0 && (
+                  <tr>
+                    <td colSpan={11} className="text-center py-16 text-zinc-500 font-sans text-xs">
+                      NO CUSTOM ASSEMBLIES DISCOVERED IN CATALOG INDEX MATCHING THE REQUIREMENTS
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

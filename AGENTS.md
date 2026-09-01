@@ -20,7 +20,7 @@ npm run lint       # tsc --noEmit
 
 ## Data model quirks
 
-- **Serialized JSON columns** in DB for `Item` and `Project`: `materials`, `cutList`, `processes`, `drawings`, `subItems`, `subProjects`, `includeStockItems`. Server deserializes on read (`/api/data`) and re-serializes on write (`/api/sync`).
+- **Serialized JSON columns** in DB for `Item` and `Project`: `materials`, `cutList`, `processes`, `drawings`, `laserCutParts`, `subItems`, `subProjects`, `includeStockItems`. Server deserializes on read (`/api/data`) and re-serializes on write (`/api/sync`). Note: laser-part mill certs live inside the already-serialized `subProjects` JSON as `SubProject.laserCerts[]` (no separate DB column).
 - **Soft deletes**: Projects use `notVisible: 1`; Stations use `isActive: false`; Clients/Materials/Items have an `isDeleted` flag in the TS type (not yet enforced at DB level).
 - **User deletion** is blocked if any process in any project has `assignedUserId` pointing to that user.
 - **Station deletion** is soft-delete only (sets `isActive: false`).

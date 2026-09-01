@@ -80,13 +80,29 @@ const upload = multer({
 // Serve uploaded files
 app.use('/uploads', express.static(uploadsDir));
 
+// Legacy records store the flat /uploads/<file> path, but multer saves into subfolders
+// (drawings/, csv/) — fall back to those folders so old links keep resolving.
+app.get('/uploads/:file', (req, res, next) => {
+  const name = req.params.file;
+  if (!name.includes('/') && !fs.existsSync(path.join(uploadsDir, name))) {
+    for (const sub of ['drawings', 'csv']) {
+      const candidate = path.join(uploadsDir, sub, name);
+      if (fs.existsSync(candidate)) {
+        return res.sendFile(candidate);
+      }
+    }
+  }
+  next();
+});
+
 // Upload endpoint
 app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
   
-  const filePath = `/uploads/${req.file.filename}`;
+  const subDir = path.resolve(path.dirname(req.file.path)) === path.resolve(csvDir) ? 'csv' : 'drawings';
+  const filePath = `/uploads/${subDir}/${req.file.filename}`;
   const fileSizeKB = Math.round(req.file.size / 1024);
   const fileSizeStr = fileSizeKB >= 1024 ? `${Math.round(fileSizeKB / 1024)} MB` : `${fileSizeKB} KB`;
   
@@ -101,58 +117,28 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   });
 });
 
-// Upload mill cert for project sub-contract
-app.post('/api/upload-mill-cert', upload.single('millCert'), async (req, res) => {
+// Upload mill cert for project sub-contract.
+// Stores the file only — the client commits outsourcedCertUrl through /api/sync on save,
+// so a later persistState can never overwrite an uploaded cert from stale local state.
+app.post('/api/upload-mill-cert', upload.single('millCert'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
-  
-  const { projectId, subProjectIndex } = req.body;
+
+  const { projectId } = req.body;
   if (!projectId) {
     return res.status(400).json({ error: 'Project ID required' });
   }
-  
-  const filePath = `/uploads/${req.file.filename}`;
-  
-  try {
-    // Get the project and update the subproject's outsourcedCertUrl
-    const project = await prisma.project.findUnique({ where: { id: projectId } });
-    if (!project) {
-      return res.status(404).json({ error: 'Project not found' });
-    }
-    
-    // Parse subProjects JSON
-    let subProjects: any[] = [];
-    try {
-      subProjects = JSON.parse(project.subProjects || '[]');
-    } catch (e) {
-      console.error('[Upload] Failed to parse subProjects:', e);
-    }
-    
-    const idx = parseInt(subProjectIndex || '0', 10);
-    if (idx >= 0 && idx < subProjects.length) {
-      subProjects[idx] = {
-        ...subProjects[idx],
-        outsourcedCertUrl: filePath
-      };
-      
-      // Update project with modified subProjects
-      await prisma.project.update({
-        where: { id: projectId },
-        data: { subProjects: JSON.stringify(subProjects) }
-      });
-    }
-    
-    res.json({
-      success: true,
-      url: filePath,
-      filename: req.file.filename,
-      originalName: req.file.originalname
-    });
-  } catch (error) {
-    console.error('[Upload] Mill cert upload error:', error);
-    res.status(500).json({ error: 'Failed to save mill cert' });
-  }
+
+  const subDir = path.resolve(path.dirname(req.file.path)) === path.resolve(csvDir) ? 'csv' : 'drawings';
+  const filePath = `/uploads/${subDir}/${req.file.filename}`;
+
+  res.json({
+    success: true,
+    url: filePath,
+    filename: req.file.filename,
+    originalName: req.file.originalname
+  });
 });
 
 // Ensure Setting record exists (seed on first run)
@@ -385,6 +371,7 @@ app.get('/api/data', async (req, res) => {
       cutList: JSON.parse(item.cutList),
       processes: JSON.parse(item.processes),
       drawings: JSON.parse(item.drawings),
+      laserCutParts: JSON.parse(item.laserCutParts || '[]'),
       subItems: JSON.parse(item.subItems),
     }));
     const projects = dbProjects.map(p => ({
@@ -466,6 +453,7 @@ app.post('/api/sync', async (req, res) => {
             cutList: JSON.stringify(item.cutList || []),
             processes: JSON.stringify(item.processes || []),
             drawings: JSON.stringify(item.drawings || []),
+            laserCutParts: JSON.stringify(item.laserCutParts || []),
             subItems: JSON.stringify(item.subItems || []),
             dateCreated: item.dateCreated,
             createdBy: item.createdBy,
@@ -479,6 +467,7 @@ app.post('/api/sync', async (req, res) => {
             cutList: JSON.stringify(item.cutList || []),
             processes: JSON.stringify(item.processes || []),
             drawings: JSON.stringify(item.drawings || []),
+            laserCutParts: JSON.stringify(item.laserCutParts || []),
             subItems: JSON.stringify(item.subItems || []),
             dateCreated: item.dateCreated,
             createdBy: item.createdBy,

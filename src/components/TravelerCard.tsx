@@ -34,6 +34,13 @@ export default function TravelerCard({ project, allItems, allMaterials, allUsers
     phone: '+61 8 8211 4000'
   };
 
+  // Laser cut part rows across this project's items (with mill cert status per sub-project batch)
+  const laserPartRows = (project.subProjects || []).flatMap((sub, subIdx) => {
+    const item = allItems.find(i => i.id === sub.itemId);
+    if (!item?.laserCutParts || item.laserCutParts.length === 0) return [];
+    return item.laserCutParts.map(lp => ({ subIdx, item, lp }));
+  });
+
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-start overflow-y-auto p-4 z-50 animate-fadeIn print:bg-white print:p-0 print:absolute print:inset-0">
       
@@ -151,6 +158,43 @@ export default function TravelerCard({ project, allItems, allMaterials, allUsers
               </tbody>
             </table>
           </div>
+
+          {/* Laser cut parts & DXF nest files (mill certificate status) */}
+          {laserPartRows.length > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-xs font-black uppercase tracking-wider text-left bg-black text-white p-1 px-2">
+                LASER CUT PARTS &amp; DXF NEST FILES (MILL CERTIFICATE STATUS)
+              </h3>
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b-2 border-black font-bold font-mono text-[10px] uppercase">
+                    <th className="py-2">Item Part Code</th>
+                    <th className="py-2">Laser Cut Part Description</th>
+                    <th className="py-2">DXF / Drawing File</th>
+                    <th className="py-2 text-center">Rev</th>
+                    <th className="py-2 text-right">Mill Cert Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {laserPartRows.map(({ subIdx, item, lp }, rIdx) => {
+                    const drawingKey = lp.drawingName || lp.description;
+                    const certAttached = Boolean((project.subProjects[subIdx]?.laserCerts || []).find(c => c.drawingName === drawingKey)?.certUrl);
+                    return (
+                      <tr key={rIdx} className="border-b border-gray-300">
+                        <td className="py-2 font-mono font-bold">{item.itemCode}</td>
+                        <td className="py-2 font-semibold">{lp.description || lp.drawingName}</td>
+                        <td className="py-2 font-mono text-[11px]">{lp.drawingName}{lp.fileType ? ` (${lp.fileType})` : ''}</td>
+                        <td className="py-2 text-center font-mono">{lp.designVersion || '—'}</td>
+                        <td className={`py-2 text-right font-mono font-bold ${certAttached ? 'text-green-700' : 'text-red-600'}`}>
+                          {certAttached ? '✓ ATTACHED' : '⚠ CERT MISSING'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Core fabrication checklist sequence with actual signoff lines and PHYSICAL STAMP CIRCLES */}
           <div className="space-y-4">

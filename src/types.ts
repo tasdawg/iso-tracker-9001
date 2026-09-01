@@ -70,6 +70,17 @@ export interface Drawing {
   filePath?: string; // Local server path to uploaded file (e.g. /uploads/drawings/xxx.pdf)
 }
 
+export interface LaserCutPart {
+  description: string;   // Short part description, e.g. "Door hinge bracket plate"
+  drawingName: string;   // File name of the attached CAD / DXF file
+  fileType: 'DXF' | 'PDF' | 'DWG';
+  fileSize: string;
+  uploadDate: string;
+  uploadedBy: string;
+  designVersion?: string; // e.g., "Rev A"
+  filePath?: string;      // Local server path to uploaded file (e.g. /uploads/drawings/xxx.dxf)
+}
+
 export interface ProcessTemplate {
   name: string;          // e.g. "Laser Cutting", "CNC Folding", "MIG Welding"
   estimatedHours: number;
@@ -90,6 +101,7 @@ export interface Item {
   cutList: CutListItem[];
   processes: ProcessTemplate[];
   drawings: Drawing[];
+  laserCutParts?: LaserCutPart[]; // Flat laser-cut sheet parts with their DXF / drawing files
   subItems: SubItemRelation[]; // Hierarchical nesting of parts
   dateCreated: string;
   createdBy: string;
@@ -124,6 +136,7 @@ export interface SubProject {
   outsourcedBatchNo?: string;
   outsourcedCertUrl?: string; // second-supplier material certificate
   outsourcedStatus?: 'Ordered' | 'Dispatched' | 'Delivered' | 'QA Passed';
+  laserCerts?: { drawingName: string; certUrl: string }[]; // Mill certs attached per laser cut part file (ISO 9001)
 }
 
 export interface Project {
@@ -172,10 +185,9 @@ export interface Setting {
   accreditationBody: string;
   stampCode: string;
   facilityLocation: string;
-  saasTier: 'Enterprise' | 'Professional' | 'Standard';
-  concurrentSeats: number;
-  autoSaves: boolean;
-  syncFreq: string;
+  autoSaves?: boolean;
+  ncrSeverities?: string; // Serialized JSON of severity level strings
+  publicUrl?: string | null; // Public-facing URL for resolved file links (e.g. https://yourdomain.com)
 }
 
 export interface Station {

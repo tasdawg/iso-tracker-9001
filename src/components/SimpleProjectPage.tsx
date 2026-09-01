@@ -7,7 +7,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Project, Item, Material, User, SubProject, SubProjectProcess } from '../types';
 import { 
   HardHat, ShieldCheck, ClipboardCheck, ArrowLeft, Clock,
-  Layers, Box, Settings, CheckCircle2, AlertTriangle, ExternalLink, RefreshCw, FileText, ShieldAlert
+  Layers, Box, Settings, CheckCircle2, AlertTriangle, ExternalLink, RefreshCw, FileText, ShieldAlert, Zap
 } from 'lucide-react';
 
 interface SimpleProjectPageProps {
@@ -412,16 +412,6 @@ export default function SimpleProjectPage({
               <span className="text-white font-bold text-[10px]">{projectProgress}%</span>
             </div>
           </div>
-
-          <div>
-            <span className="text-zinc-500 text-[9px] uppercase font-bold block">Weld Cert Type</span>
-            <span className="text-zinc-300 font-bold block mt-1.5">AS-1554.1 GP Structural</span>
-          </div>
-
-          <div>
-            <span className="text-zinc-500 text-[9px] uppercase font-bold block">Facility Bay Section</span>
-            <span className="text-zinc-300 font-bold block mt-1.5">Melbourne Bay #4 Fab Room</span>
-          </div>
         </div>
       </div>
 
@@ -469,15 +459,20 @@ export default function SimpleProjectPage({
                               <FileText size={11} className="text-zinc-500" />
                               {dwg.name} ({dwg.designVersion})
                             </span>
-                            <a 
-                              href="#"
+                            <a
+                              href={dwg.filePath || '#'}
+                              target={!!dwg.filePath && dwg.fileType === 'PDF' ? '_blank' : undefined}
+                              rel={!!dwg.filePath && dwg.fileType === 'PDF' ? 'noreferrer' : undefined}
+                              download={!!dwg.filePath && dwg.fileType !== 'PDF' ? dwg.name : undefined}
                               onClick={(e) => {
-                                e.preventDefault();
-                                alert(`ACCESSING SECURE DATA REPOSITORY:\n\nOpening technical CAD blueprint file "${dwg.name}" ${dwg.designVersion} (${dwg.fileType} format, size: ${dwg.fileSize}) for structural dimensions confirmation.`);
+                                if (!dwg.filePath) {
+                                  e.preventDefault();
+                                  alert(`ACCESSING SECURE DATA REPOSITORY:\n\nOpening technical CAD blueprint file "${dwg.name}" ${dwg.designVersion} (${dwg.fileType} format, size: ${dwg.fileSize}) for structural dimensions confirmation.`);
+                                }
                               }}
                               className="text-orange-500 hover:text-orange-400 font-black flex items-center gap-0.5 tracking-wider"
                             >
-                              OPEN {dwg.fileType} <ExternalLink size={9} />
+                              {!!dwg.filePath && dwg.fileType !== 'PDF' ? `DOWNLOAD ${dwg.fileType}` : `OPEN ${dwg.fileType}`} <ExternalLink size={9} />
                             </a>
                           </div>
                         ))}
@@ -485,6 +480,51 @@ export default function SimpleProjectPage({
                     ) : (
                       <div className="text-[10px] text-zinc-500 font-mono pt-1 text-center bg-zinc-950 p-2 border border-zinc-900">
                         No blueprint attachments loaded
+                      </div>
+                    )}
+
+                    {/* Laser cut parts & DXF nest files (mill cert status) */}
+                    {partItem && (partItem.laserCutParts || []).length > 0 && (
+                      <div className="pt-2 border-t border-zinc-900 space-y-1.5 text-[10px] font-mono">
+                        <div className="flex items-center gap-1.5 pt-1 pb-0.5 uppercase tracking-widest font-black text-lime-400/80 text-[8px] font-sans">
+                          <Zap size={9} /> Laser Cut Part Files &amp; DXF Nests
+                        </div>
+                        {(partItem.laserCutParts || []).map((lp, lpIdx) => {
+                          const drawingKey = lp.drawingName || lp.description;
+                          const certAttached = Boolean((sub.laserCerts || []).find(c => c.drawingName === drawingKey)?.certUrl);
+                          return (
+                            <div key={lpIdx} className={`flex justify-between items-center gap-2 p-1.5 border ${certAttached ? 'bg-zinc-950 border-zinc-900' : 'bg-red-950/20 border-red-900/40'}`}>
+                              <span className="text-zinc-300 font-bold flex items-center gap-1.5 font-sans uppercase min-w-0">
+                                <Zap size={11} className={`shrink-0 ${certAttached ? 'text-lime-400' : 'text-red-400'}`} />
+                                <span className="truncate">{lp.description || lp.drawingName}</span>
+                              </span>
+                              <div className="flex items-center gap-2 shrink-0">
+                                {!certAttached && (
+                                  <span className="text-[8px] font-black text-red-400 uppercase tracking-wider bg-red-950/40 border border-red-900/30 px-1.5 py-0.5 whitespace-nowrap">
+                                    Cert Missing
+                                  </span>
+                                )}
+                                {lp.drawingName && (
+                                  <a
+                                    href={lp.filePath || '#'}
+                                    target={!!lp.filePath && lp.fileType === 'PDF' ? '_blank' : undefined}
+                                    rel={!!lp.filePath && lp.fileType === 'PDF' ? 'noreferrer' : undefined}
+                                    download={!!lp.filePath && lp.fileType !== 'PDF' ? lp.drawingName : undefined}
+                                    onClick={(e) => {
+                                      if (!lp.filePath) {
+                                        e.preventDefault();
+                                        alert(`ACCESSING SECURE DATA REPOSITORY:\n\nOpening laser cut part file "${lp.drawingName}" ${lp.designVersion || ''} (${lp.fileType || 'DXF'} format${lp.fileSize ? `, size: ${lp.fileSize}` : ''}) for nest verification.`);
+                                      }
+                                    }}
+                                    className="text-orange-500 hover:text-orange-400 font-black flex items-center gap-0.5 tracking-wider whitespace-nowrap"
+                                  >
+                                    {!!lp.filePath && lp.fileType !== 'PDF' ? `DOWNLOAD ${lp.fileType || 'DXF'}` : `OPEN ${lp.fileType || 'DXF'}`} <ExternalLink size={9} />
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

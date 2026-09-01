@@ -66,6 +66,21 @@ export function getJoinedDrawings(item: Item, allItems: Item[]): { itemName: str
     });
   }
 
+  // Add laser cut part files (flat sheet parts with their own DXF / drawing)
+  if (item.laserCutParts) {
+    item.laserCutParts.forEach(lp => {
+      drawings.push({
+        itemName: item.name,
+        name: lp.drawingName || `${lp.description} (laser cut part)`,
+        fileType: lp.fileType,
+        fileSize: lp.fileSize,
+        uploadDate: lp.uploadDate,
+        uploadedBy: lp.uploadedBy,
+        designVersion: lp.designVersion || ''
+      });
+    });
+  }
+
   // Add child drawings
   if (item.subItems) {
     item.subItems.forEach(sub => {

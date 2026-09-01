@@ -9,7 +9,7 @@ import { getJoinedDrawings, getItemHierarchy, generateNextId, generateNextLogId 
 import { 
   ArrowLeft, CheckSquare, Clock, FileText, UserCheck, Settings, 
   ExternalLink, Hammer, ShieldAlert, CheckCircle2, User as UserIcon, HelpCircle, Plus, Info, Upload,
-  Printer, Play, Square, AlertTriangle, X
+  Printer, Play, Square, AlertTriangle, X, Zap
 } from 'lucide-react';
 import NestingOptimizer from './NestingOptimizer';
 import GanttScheduler from './GanttScheduler';
@@ -26,6 +26,7 @@ interface ProjectDetailsProps {
   onBack: () => void;
   onUpdateProject: (updatedProject: Project) => void;
   onUpdateClients?: (newClients: Client[]) => void;
+  allLogs?: InventoryLog[];
   onAddLog?: (log: InventoryLog) => void;
   onViewSimpleCard?: () => void;
 }
@@ -83,6 +84,7 @@ export default function ProjectDetails({
   onBack,
   onUpdateProject,
   onUpdateClients,
+  allLogs,
   onAddLog,
   onViewSimpleCard
 }: ProjectDetailsProps) {
@@ -359,6 +361,8 @@ export default function ProjectDetails({
     const updatedSubProjects = [...project.subProjects];
     const subProj = { ...updatedSubProjects[subIdx] };
 
+    const previousStatus = subProj.outsourcedStatus;
+
     subProj.outsourcedSupplierName = outsourceSupplier;
     subProj.outsourcedPoNumber = outsourcePO;
     subProj.outsourcedBatchNo = outsourceBatch;
@@ -368,9 +372,9 @@ export default function ProjectDetails({
     updatedSubProjects[subIdx] = subProj;
     
     // Add transaction log for external income automatically when updated to Delivered
-    if (outsourceStatus === 'Delivered' || outsourceStatus === 'QA Passed') {
+    if ((outsourceStatus === 'Delivered' || outsourceStatus === 'QA Passed') && previousStatus !== outsourceStatus) {
       const newLog: InventoryLog = {
-        id: generateNextLogId([]),
+        id: generateNextLogId(allLogs || []),
         type: 'INCOME',
         date: new Date().toISOString().replace(/\.\d+Z/, ''),
         materialId: 'outsourced-' + subProj.itemId,
@@ -400,7 +404,7 @@ export default function ProjectDetails({
     setEditingOutsourceIndex(null);
   };
 
-  const handleMillCertUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleMillCertUpload = async (e: React.ChangeEvent<HTMLInputElement>, subIdx: number) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -409,7 +413,7 @@ export default function ProjectDetails({
       const formData = new FormData();
       formData.append('millCert', file);
       formData.append('projectId', project.id);
-      formData.append('subProjectIndex', editingOutsourceIndex?.toString() || '0');
+      formData.append('subProjectIndex', String(subIdx));
 
       const response = await fetch('/api/upload-mill-cert', {
         method: 'POST',
@@ -427,6 +431,40 @@ export default function ProjectDetails({
       alert('Failed to upload mill cert. Please try again.');
     } finally {
       setUploading(false);
+    }
+  };
+
+  // Upload a mill cert for a laser cut part file; commits into the sub-project's laserCerts via onUpdateProject (persisted through /api/sync)
+  const [laserCertUploadingKey, setLaserCertUploadingKey] = useState<string | null>(null);
+
+  const handleLaserCertUpload = async (e: React.ChangeEvent<HTMLInputElement>, subIdx: number, drawingKey: string) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const uploadKey = `${subIdx}:${drawingKey}`;
+    setLaserCertUploadingKey(uploadKey);
+    try {
+      const formData = new FormData();
+      formData.append('millCert', file);
+      formData.append('projectId', project.id);
+
+      const response = await fetch('/api/upload-mill-cert', { method: 'POST', body: formData });
+      if (!response.ok) throw new Error('Upload failed');
+
+      const result = await response.json();
+
+      const updatedSubProjects = [...project.subProjects];
+      const subProj = { ...updatedSubProjects[subIdx] };
+      const otherCerts = (subProj.laserCerts || []).filter(c => c.drawingName !== drawingKey);
+      subProj.laserCerts = [...otherCerts, { drawingName: drawingKey, certUrl: result.url }];
+      updatedSubProjects[subIdx] = subProj;
+
+      onUpdateProject({ ...project, subProjects: updatedSubProjects });
+    } catch (error) {
+      console.error('Laser mill cert upload error:', error);
+      alert('Failed to upload laser part mill cert. Please try again.');
+    } finally {
+      setLaserCertUploadingKey(null);
     }
   };
 
@@ -491,6 +529,13 @@ export default function ProjectDetails({
 
   // Get joined drawings across all active items and nesting child items
   const allDrawings = currentItem ? getJoinedDrawings(currentItem, allItems) : [];
+
+  // Laser cut part files across this project's items that require mill certificate tracking
+  const laserCertRows = (project.subProjects || []).flatMap((sub, subIdx) => {
+    const item = allItems.find(i => i.id === sub.itemId);
+    if (!item?.laserCutParts || item.laserCutParts.length === 0) return [];
+    return item.laserCutParts.map(lp => ({ subIdx, item, lp }));
+  });
 
   return (
     <div className="space-y-8 animate-fadeIn text-white max-w-7xl mx-auto px-4 py-8">
@@ -680,6 +725,21 @@ export default function ProjectDetails({
                             </div>
                           ))}
                         </div>
+
+                        {/* Laser cut parts & DXF nest files for this item */}
+                        {(item.laserCutParts || []).length > 0 && (
+                          <div className="text-[11px] border-t border-white/5 pt-2 mt-2 space-y-1 bg-black p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-lime-400 font-bold flex items-center gap-1">
+                              <Zap size={11} /> Laser cut parts (DXF nest files):
+                            </div>
+                            {(item.laserCutParts || []).map((lp, lpIdx) => (
+                              <div key={lpIdx} className="flex justify-between items-center pl-2 font-mono gap-2">
+                                <span className="text-gray-300 truncate">{lp.description || lp.drawingName}</span>
+                                <span className="text-lime-400/70 text-[10px] shrink-0">{lp.drawingName}{lp.designVersion ? ` · ${lp.designVersion}` : ''}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
                         {/* Direct status indicators */}
                         <div className="flex justify-between items-center text-[10px] uppercase font-bold tracking-widest text-gray-500 mt-2 pt-2 border-t border-white/5">
@@ -965,7 +1025,7 @@ export default function ProjectDetails({
                               <input
                                 type="file"
                                 accept=".pdf,.xlsx,.xls,.doc,.docx"
-                                onChange={handleMillCertUpload}
+                                onChange={(e) => handleMillCertUpload(e, sIdx)}
                                 disabled={uploading}
                                 className="w-full bg-black border border-white/10 p-2 text-xs text-white focus:border-orange-500 outline-none file:mr-2 file:bg-orange-500 file:text-black file:font-bold file:border-0 file:cursor-pointer"
                               />
@@ -1015,6 +1075,65 @@ export default function ProjectDetails({
                 })}
               </div>
             </div>
+
+            {/* Laser Cut Part Mill Certificates (ISO 9001 Audited) */}
+            {laserCertRows.length > 0 && (
+              <div className="p-6 bg-black border border-white/5">
+                <h4 className="text-xs uppercase tracking-[0.2em] font-bold text-brand-orange-500 pb-3 border-b border-white/10 flex items-center justify-between mb-4">
+                  <span>Laser Cut Part Mill Certificates (ISO 9001 Audited)</span>
+                  <Zap size={14} />
+                </h4>
+                <p className="text-xs text-gray-400 mb-4">
+                  Every laser cut part file attached to this project's items requires the steel supplier mill certificate of conformity logged against the fabrication batch. Parts without an attached certificate are flagged in red for audit:
+                </p>
+
+                <div className="space-y-2">
+                  {laserCertRows.map(({ subIdx, item, lp }) => {
+                    const drawingKey = lp.drawingName || lp.description;
+                    const certUrl = (project.subProjects[subIdx].laserCerts || []).find(c => c.drawingName === drawingKey)?.certUrl;
+                    const uploadKey = `${subIdx}:${drawingKey}`;
+
+                    return (
+                      <div key={uploadKey} className={`p-3 border flex flex-col md:flex-row md:items-center justify-between gap-2 ${
+                        certUrl ? 'border-green-500/20 bg-[#121212]' : 'border-red-500/40 bg-red-950/20'
+                      }`}>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {certUrl ? (
+                              <span className="text-[9px] uppercase font-black tracking-widest text-green-400 border border-green-500/30 bg-green-500/10 px-1.5 py-0.5">Cert Attached</span>
+                            ) : (
+                              <span className="text-[9px] uppercase font-black tracking-widest text-red-400 border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 animate-pulse">Mill Cert Missing</span>
+                            )}
+                            <span className="text-xs font-bold text-white uppercase truncate">{lp.description || lp.drawingName}</span>
+                          </div>
+                          <div className="text-[10px] text-gray-400 font-mono mt-1">
+                            {item.itemCode} &bull; File: {lp.drawingName}{lp.designVersion ? ` · ${lp.designVersion}` : ''}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 shrink-0 w-full md:w-auto">
+                          {certUrl && (
+                            <a href={certUrl} target="_blank" rel="noreferrer" className="text-green-400 hover:underline flex items-center gap-1 text-[11px] font-bold whitespace-nowrap">
+                              View Cert <ExternalLink size={10} />
+                            </a>
+                          )}
+                          {laserCertUploadingKey === uploadKey ? (
+                            <span className="text-red-400 text-[10px] uppercase font-bold whitespace-nowrap">Uploading...</span>
+                          ) : (
+                            <input
+                              type="file"
+                              accept=".pdf,.xlsx,.xls,.doc,.docx,image/*"
+                              onChange={(e) => handleLaserCertUpload(e, subIdx, drawingKey)}
+                              className="w-full md:w-auto bg-black border border-white/10 p-2 text-xs text-white focus:border-orange-500 outline-none file:mr-2 file:bg-orange-500 file:text-black file:font-bold file:border-0 file:cursor-pointer"
+                            />
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
